@@ -5,9 +5,11 @@ to build tool calls for Notion custom agents.
 
 > [!WARNING]
 >
-> This is a **extreme pre-release alpha** of Notion Workers. You probably
+> This is an **extreme pre-release alpha** of Notion Workers. You probably
 > shouldn't use it for anything serious just yet. Also, it'll only be helpful
-> if you have access to Notion custom agents.
+> if you have access to Notion custom agents. We are still making breaking
+> changes to Notion Workers CLI, templates, and more. We aim to minimize
+> friction, but expect things to go wrong.
 
 ## Quick Start
 
