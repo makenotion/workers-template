@@ -1,4 +1,4 @@
-import { Worker } from "@project-ajax/sdk";
+import { Worker } from "@notionhq/workers";
 
 const worker = new Worker();
 export default worker;

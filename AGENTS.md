@@ -6,12 +6,12 @@
 - Generated: `dist/` build output, `workers.json` CLI config.
 
 ## Worker & Capability API (SDK)
-`@project-ajax/sdk` provides `Worker`, schema helpers, and builders; the `ntn` CLI powers worker management.
+`@notionhq/workers` provides `Worker`, schema helpers, and builders; the `ntn` CLI powers worker management.
 
 ### Agent tool calls
 
 ```ts
-import { Worker } from "@project-ajax/sdk";
+import { Worker } from "@notionhq/workers";
 
 const worker = new Worker();
 export default worker;

@@ -22,7 +22,7 @@ cd my-worker
 You'll find a `Hello, world` example in `src/index.ts`:
 
 ```ts
-import { Worker } from "@project-ajax/sdk";
+import { Worker } from "@notionhq/workers";
 
 const worker = new Worker();
 export default worker;
