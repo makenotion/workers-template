@@ -1,5 +1,5 @@
 {
-	"name": "@project-ajax/template",
+	"name": "@notionhq/workers-template",
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
@@ -11,12 +11,11 @@
 		"npm": ">=10.9.2"
 	},
 	"devDependencies": {
-		"@project-ajax/cli": ">=0.0.0",
 		"@types/node": "^22.9.0",
 		"tsx": "^4.20.6",
 		"typescript": "^5.8.0"
 	},
 	"dependencies": {
-		"@project-ajax/sdk": ">=0.0.0"
+		"@notionhq/workers": ">=0.0.0"
 	}
 }
