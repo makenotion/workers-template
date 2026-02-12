@@ -136,7 +136,7 @@ function exec(capability: string, input: Record<string, unknown>) {
 exec("sayHello", { name: "World" });
 ```
 
-Use this pattern to build up a suite of exec calls that covers each tool with representative inputs. Run `npm run check` first to catch type errors, then run your test script to verify end-to-end behavior.
+Use this pattern to build up a suite of exec calls that covers each tool with representative inputs.
 
 ## Commit & Pull Request Guidelines
 - Messages typically use `feat(scope): ...`, `TASK-123: ...`, or version bumps.
