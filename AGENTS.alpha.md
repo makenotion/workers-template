@@ -200,7 +200,26 @@ The `--plain` flag outputs tab-separated values without formatting, making it ea
 - Use tabs for indentation; capability keys in lowerCamelCase.
 
 ## Testing Guidelines
-- No test runner configured; validate with `npm run check` and a deploy/exec loop.
+- No test runner configured; validate with `npm run check` and end-to-end testing via `ntn workers exec`.
+- Write a test script (e.g. `test.sh`) that exercises each tool capability using `ntn workers exec`. Use the `--local` flag for local execution or omit it to run against the deployed worker.
+
+**Local execution** runs your worker code directly on your machine. Any `.env` file in the project root is automatically loaded, so secrets and config values are available via `process.env`.
+
+**Remote execution** (without `--local`) runs against the deployed worker. Any required secrets must be pushed to the remote environment first using `ntn workers env push`.
+
+**Example test script (`test.sh`):**
+```shell
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run locally (uses .env automatically):
+ntn workers exec sayHello --local -d '{"name": "World"}'
+
+# Or run against the deployed worker (requires `ntn workers deploy` and `ntn workers env push` first):
+# ntn workers exec sayHello -d '{"name": "World"}'
+```
+
+Use this pattern to build up a suite of exec calls that covers each tool with representative inputs. Run `npm run check` first to catch type errors, then run your test script to verify end-to-end behavior.
 
 ## Commit & Pull Request Guidelines
 - Messages typically use `feat(scope): ...`, `TASK-123: ...`, or version bumps.
