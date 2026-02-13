@@ -14,6 +14,7 @@ to build tool calls for Notion custom agents.
 ## Quick Start
 
 ```shell
+npm i -g ntn
 ntn workers new
 # Follow the prompts to scaffold your worker
 cd my-worker
