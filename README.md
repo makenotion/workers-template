@@ -92,7 +92,13 @@ worker.oauth("githubAuth", {
 });
 ```
 
-Start the OAuth flow:
+After deploying, get your redirect URL and add it to your OAuth provider's app settings:
+
+```shell
+ntn workers oauth show-redirect-url
+```
+
+Then start the OAuth flow:
 
 ```shell
 ntn workers oauth start githubAuth
@@ -282,6 +288,9 @@ ntn workers runs logs <runId>
 
 # Start OAuth flow
 ntn workers oauth start <oauthName>
+
+# Show OAuth redirect URL (set this in your provider's app settings)
+ntn workers oauth show-redirect-url
 
 # Display help for all commands
 ntn --help
