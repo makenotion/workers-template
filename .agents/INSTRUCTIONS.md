@@ -47,6 +47,8 @@ const myOAuth = worker.oauth("myOAuth", {
 
 The OAuth capability allows you to perform the three legged OAuth flow after specifying parameters of your OAuth client: `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
 
+After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
+
 ### Other capabilities
 
 There are additional capability types in the SDK but these are restricted to a private alpha. Only Agent tools and OAuth are generally available.
