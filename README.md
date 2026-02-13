@@ -13,6 +13,14 @@ to build tool calls for Notion custom agents.
 
 ## Quick Start
 
+Install the `ntn` CLI:
+
+```shell
+npm i -g ntn
+```
+
+Scaffold a new worker:
+
 ```shell
 ntn workers new
 # Follow the prompts to scaffold your worker
