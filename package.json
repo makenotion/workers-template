@@ -4,7 +4,9 @@
 	"private": true,
 	"scripts": {
 		"build": "tsc",
-		"check": "tsc --noEmit"
+		"check": "tsc --noEmit",
+		"agents:sync": ".agents/sync.sh",
+		"agents:check": ".agents/sync.sh --check"
 	},
 	"engines": {
 		"node": ">=22.0.0",
