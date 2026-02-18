@@ -9,51 +9,6 @@ if [[ "${1:-}" == "--check" ]]; then
   check_mode=true
 fi
 
-# Parse vars from config.toml (supports nested sections like [vars.coauthor])
-# Uses parallel arrays instead of associative arrays for Bash 3.2 compatibility.
-var_keys=()
-var_values=()
-in_vars=false
-current_prefix=""
-while IFS= read -r line; do
-  if [[ "$line" =~ ^\[vars\]$ ]]; then
-    in_vars=true
-    current_prefix=""
-  elif [[ "$line" =~ ^\[vars\.([a-zA-Z_][a-zA-Z0-9_.]*)\]$ ]]; then
-    in_vars=true
-    current_prefix="${BASH_REMATCH[1]}."
-  elif [[ "$line" =~ ^\[.*\]$ ]]; then
-    in_vars=false
-  elif $in_vars && [[ "$line" =~ ^([a-zA-Z_][a-zA-Z0-9_]*)\ *=\ *\"(.*)\"$ ]]; then
-    var_keys+=("${current_prefix}${BASH_REMATCH[1]}")
-    var_values+=("${BASH_REMATCH[2]}")
-  fi
-done < "$AGENTS_DIR/config.toml"
-
-# Render template: replace {{var}} patterns with values from config.
-# When an agent name is provided, agent-specific vars take priority.
-# E.g. with agent "claude", {{coauthor}} resolves to the value for key "coauthor.claude".
-render() {
-  local content agent="${2:-}"
-  content=$(<"$1")
-
-  local i
-  if [[ -n "$agent" ]]; then
-    for (( i=0; i<${#var_keys[@]}; i++ )); do
-      local key="${var_keys[$i]}"
-      if [[ "$key" == *".$agent" ]]; then
-        local base_key="${key%."$agent"}"
-        content="${content//\{\{$base_key\}\}/${var_values[$i]}}"
-      fi
-    done
-  fi
-
-  for (( i=0; i<${#var_keys[@]}; i++ )); do
-    content="${content//\{\{${var_keys[$i]}\}\}/${var_values[$i]}}"
-  done
-  printf '%s' "$content"
-}
-
 # Ensure a symlink exists from dest -> target, or check it in check mode.
 # Both paths are relative to ROOT_DIR.
 sync_link() {
@@ -76,11 +31,11 @@ sync_link() {
   fi
 }
 
-# Sync a rendered file to a destination, or check it matches
+# Copy a file to a destination, or check it matches
 sync_file() {
-  local src="$1" dest="$2" agent="${3:-}"
-  local rendered
-  rendered="$(render "$src" "$agent")"
+  local src="$1" dest="$2"
+  local content
+  content=$(<"$src")
 
   if $check_mode; then
     if [[ ! -f "$dest" ]]; then
@@ -89,13 +44,13 @@ sync_file() {
     fi
     local existing
     existing=$(<"$dest")
-    if [[ "$rendered" != "$existing" ]]; then
+    if [[ "$content" != "$existing" ]]; then
       echo "OUT OF SYNC: $dest" >&2
       return 1
     fi
   else
     mkdir -p "$(dirname "$dest")"
-    printf '%s' "$rendered" > "$dest"
+    printf '%s' "$content" > "$dest"
   fi
 }
 
@@ -123,7 +78,7 @@ for skill_dir in "$AGENTS_DIR"/skills/*/; do
 
   for target in claude codex; do
     dest="$ROOT_DIR/.$target/skills/$skill_name/SKILL.md"
-    if ! sync_file "$src" "$dest" "$target"; then
+    if ! sync_file "$src" "$dest"; then
       failed=true
     fi
   done
