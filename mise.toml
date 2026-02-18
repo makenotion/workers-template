@@ -1,7 +1,0 @@
-[tasks."agents:sync"]
-description = "Sync agent configs from .agents/ to tool-specific locations"
-run = ".agents/sync.sh"
-
-[tasks."agents:check"]
-description = "Check that synced agent configs are up to date"
-run = ".agents/sync.sh --check"
