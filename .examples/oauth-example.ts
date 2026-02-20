@@ -1,4 +1,5 @@
 import { Worker } from "@notionhq/workers";
+import * as J from "@notionhq/workers/json-schema-builder";
 
 const worker = new Worker();
 export default worker;
@@ -63,12 +64,7 @@ worker.sync("googleCalendarSync", {
 worker.tool("customApiTool", {
 	title: "Custom API Tool",
 	description: "Calls a custom API using OAuth",
-	schema: {
-		type: "object",
-		properties: {},
-		required: [],
-		additionalProperties: false,
-	},
+	schema: J.object({}),
 	execute: async () => {
 		const token = await myCustomAuth.accessToken();
 		console.log("Using custom provider token:", `${token.slice(0, 10)}...`);
