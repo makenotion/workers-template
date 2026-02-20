@@ -7,7 +7,7 @@ to build tool calls for Notion custom agents.
 >
 > This is an **extreme pre-release alpha** of Notion Workers. You probably
 > shouldn't use it for anything serious just yet. Also, it'll only be helpful
-> if you have access to Notion custom agents. We are still making breaking
+> if you have access to Notion custom agents (and a workspace admin [opt's in](https://www.notion.so/?target=ai)). We are still making breaking
 > changes to Notion Workers CLI, templates, and more. We aim to minimize
 > friction, but expect things to go wrong.
 
@@ -316,3 +316,7 @@ Store secrets in `.env` for local development:
 ```shell
 ntn workers env pull
 ```
+
+## Have a question?
+
+Join the [Notion Dev slack](https://join.slack.com/t/notiondevs/shared_invite/zt-3r1aq1t1s-hM2har7iqfOfHJRrH9PHww)!
