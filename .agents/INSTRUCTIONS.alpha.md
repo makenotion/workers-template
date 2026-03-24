@@ -163,13 +163,61 @@ worker.sync("tasksSync", {
 });
 ```
 
+### Sync Management (CLI)
+
+**Monitor sync status:**
+```shell
+ntn workers sync status              # live-updating watch mode (polls every 5s)
+ntn workers sync status <key>        # filter to a specific sync capability
+ntn workers sync status --no-watch   # print once and exit
+ntn workers sync status --interval 10 # custom poll interval in seconds
+```
+
+Status labels:
+- **HEALTHY** — last run succeeded
+- **INITIALIZING** — deployed but hasn't succeeded yet
+- **WARNING** — 1–2 consecutive failures
+- **ERROR** — 3+ consecutive failures
+- **DISABLED** — capability is disabled
+
+**Dry-run a sync (preview without writing):**
+```shell
+ntn workers sync dry-run <key>                   # run execute, show objects, don't write to the database
+ntn workers sync dry-run <key> --context '{"page":2}'  # resume from a previous dry-run's nextContext
+```
+Dry-run calls your sync's `execute` function and shows the objects it would produce, but **does not write anything to the Notion database**. Use it to verify your sync logic and inspect the data before committing to a real run. When piped, outputs raw JSON.
+
+**Force-run a sync (write immediately, bypass schedule):**
+```shell
+ntn workers sync force-run <key>
+```
+Force-run triggers a **real** sync cycle that writes to the database, bypassing the normal schedule. Use it to push changes immediately rather than waiting for the next scheduled run.
+
+**Reset sync state (restart from scratch):**
+```shell
+ntn workers sync state reset <key>
+```
+Clears the cursor and stats so the next run starts from the beginning.
+
+**Enable / disable a sync:**
+```shell
+ntn workers capabilities list            # show all capabilities
+ntn workers capabilities disable <key>   # pause a sync
+ntn workers capabilities enable <key>    # resume a sync
+```
+
+> **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.
+
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
 - `npm run build`: compile TypeScript to `dist/`.
 - `npm run check`: type-check only (no emit).
 - `ntn login`: connect to a Notion workspace.
-- `ntn workers deploy`: build and publish capabilities.
+- `ntn workers deploy`: build and publish capabilities. Does not reset sync state.
 - `ntn workers exec <capability>`: run a sync or tool.
+- `ntn workers sync status`: monitor sync health (live-updating).
+- `ntn workers sync dry-run <key>`: preview sync output without writing to the database.
+- `ntn workers sync force-run <key>`: trigger a real sync immediately (writes to the database).
 
 ## Debugging & Monitoring Runs
 Use `ntn workers runs` to inspect run history and logs.
@@ -195,6 +243,34 @@ ntn workers runs list --plain | grep tasksSync | head -n1 | cut -f1 | xargs -I{}
 ```
 
 The `--plain` flag outputs tab-separated values without formatting, making it easy to pipe to other commands.
+
+### Debugging Syncs
+
+**Check sync health:**
+```shell
+ntn workers sync status
+```
+Look at failure counts, error messages, and last succeeded times.
+
+**Sync not running?** Check if the capability is disabled:
+```shell
+ntn workers capabilities list
+```
+
+**Preview what a sync would produce (without writing):**
+```shell
+ntn workers sync dry-run <key>
+```
+
+**Retry a failed sync (writes to the database):**
+```shell
+ntn workers sync force-run <key>
+```
+
+**Sync in a bad state?** Reset the cursor and restart:
+```shell
+ntn workers sync state reset <key>
+```
 
 ## Coding Style & Naming Conventions
 - TypeScript with `strict` enabled; keep types explicit when shaping I/O.
