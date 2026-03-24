@@ -195,7 +195,7 @@ Force-run triggers a **real** sync cycle that writes to the database, bypassing 
 
 **Reset sync state (restart from scratch):**
 ```shell
-ntn workers sync state reset <key>
+ntn workers state-reset <key>
 ```
 Clears the cursor and stats so the next run starts from the beginning.
 
@@ -206,7 +206,7 @@ ntn workers capabilities disable <key>   # pause a sync
 ntn workers capabilities enable <key>    # resume a sync
 ```
 
-> **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.
+> **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers state-reset <key>` to explicitly restart from scratch.
 
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
@@ -269,7 +269,7 @@ ntn workers sync force-run <key>
 
 **Sync in a bad state?** Reset the cursor and restart:
 ```shell
-ntn workers sync state reset <key>
+ntn workers state-reset <key>
 ```
 
 ## Coding Style & Naming Conventions

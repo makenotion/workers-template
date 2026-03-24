@@ -101,7 +101,7 @@ ntn workers sync status
 ```
 
 > [!NOTE]
-> Deploying does **not** reset sync state — syncs resume from their last cursor position. To restart a sync from scratch, use `ntn workers sync state reset <key>`.
+> Deploying does **not** reset sync state — syncs resume from their last cursor position. To restart a sync from scratch, use `ntn workers state-reset <key>`.
 
 ## Authentication & Secrets
 
@@ -349,7 +349,7 @@ ntn workers sync dry-run <syncKey>
 ntn workers sync force-run <syncKey>
 
 # Reset sync state (restart from scratch)
-ntn workers sync state reset <syncKey>
+ntn workers state-reset <syncKey>
 
 # List all capabilities
 ntn workers capabilities list
