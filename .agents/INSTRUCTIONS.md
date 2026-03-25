@@ -52,6 +52,8 @@ The OAuth capability allows you to perform the three legged OAuth flow after spe
 
 After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
 
+**OAuth setup order:** Deploy → `ntn workers env push` (secrets must be available remotely) → set redirect URL → `ntn workers oauth start`. The deployed worker needs the client secret to exchange the authorization code for tokens, so `env push` must happen before `oauth start`.
+
 ### Other capabilities
 
 There are additional capability types in the SDK but these are restricted to a private alpha. Only Agent tools and OAuth are generally available.

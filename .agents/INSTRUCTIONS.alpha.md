@@ -46,6 +46,7 @@ worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
 
 - For user-managed OAuth, supply `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
 - After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
+- **OAuth setup order:** Deploy → `ntn workers env push` → set redirect URL → `ntn workers oauth start`. Secrets must be pushed before starting the OAuth flow because the deployed worker needs the client secret to exchange the authorization code for tokens.
 
 ### Sync
 #### Strategy and Pagination
