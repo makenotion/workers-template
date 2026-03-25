@@ -53,8 +53,8 @@ worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
 Syncs run in a "sync cycle": a back-to-back chain of `execute` calls that starts at a scheduled trigger and ends when an execution returns `hasMore: false`. By default, syncs run every 30 minutes. Set `schedule` to an interval like `"15m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`), or `"continuous"` to run as fast as possible.
 
 - Always use pagination, when available. Returning too many changes in one execution will fail. Start with batch sizes of ~100 changes.
-- `mode=replace` is simpler, and fine for smaller syncs (<10k)
-- Use `mode=incremental` when the sync could return a lot of data (>10k), eg for SaaS tools like Salesforce or Stripe
+- `mode=replace` is simpler — use it when the API has no change tracking (no `updated_at` filter, no event feed)
+- Use `mode=incremental` when the API supports change tracking (e.g. `updated_since`, event streams), which enterprise APIs like Salesforce, Stripe, and Linear typically do
 - When using `mode=incremental`, emit delete markers as needed if easy to do (below)
 
 **Sync strategy (`mode`):**

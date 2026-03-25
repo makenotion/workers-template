@@ -27,17 +27,21 @@ If they name a well-known API, look up its pagination mechanism and change-track
 ### Step 2: Determine the Right Mode
 
 Based on what you know about the data source, make a recommendation. Consider:
-- **Expected volume:** A team roster is probably <100 records (replace). A CRM's
-  contacts or a ticketing system's issues could be 10k-1M+ (incremental).
-  Use your knowledge of the API to estimate — don't ask the user unless unsure.
-- **Change tracking:** Does the API have `updated_at`, an events endpoint, or a
-  changelog? If not, replace mode is the only practical option regardless of volume.
+- **API capability (the deciding factor):** Does the API support `updated_at` filters,
+  event feeds, or a changelog? Enterprise APIs (Salesforce, Stripe, Linear, GitHub,
+  HubSpot) almost always do — use `incremental`. Simpler APIs (small web services,
+  scraped data, flat file exports) often have no change tracking — use `replace`.
+- **Change tracking drives the decision, not dataset size.** A Linear workspace may
+  only have a few thousand issues, but its API supports the queries needed for
+  incremental, so incremental is the right choice. Conversely, a website listing
+  local pickleball courts has no `updated_since` endpoint regardless of how many
+  records it has.
 
 Recommend a mode with a brief explanation:
-- **replace** if: <10k records, no good change tracking, or simplicity is preferred.
+- **replace** if: the API has no change tracking (no `updated_at`, no event feed).
   Simpler (no backfill/delta), auto-handles deletes, but re-fetches everything each cycle.
-- **incremental** if: >10k records AND the API has change tracking.
-  Efficient for large datasets but requires bi-modal cursor design and explicit delete handling.
+- **incremental** if: the API supports change tracking (`updated_at`, events, changelog).
+  More efficient and requires bi-modal cursor design and explicit delete handling.
 
 Let the user override if they disagree.
 

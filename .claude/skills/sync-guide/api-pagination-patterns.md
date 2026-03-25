@@ -596,13 +596,11 @@ Does the API have an events/changelog endpoint?
 ## Decision Tree: Choosing Replace vs Incremental Mode
 
 ```
-How many records in total?
-├─ < 10,000 → replace (simpler, auto-handles deletes)
+Does the API support change tracking (updated_at / modified_since / change feed)?
+├─ No → replace (simpler, auto-handles deletes)
 │
-├─ > 10,000
-│  ├─ Does the API have updated_at / modified_since / change feed?
-│  │  ├─ Yes → incremental
-│  │  └─ No → replace (but set a longer schedule interval)
+├─ Yes
+│  ├─ → incremental
 │  │
 │  └─ Does the API support deletion detection?
 │     ├─ Yes (archived filter, audit log, events) → incremental with flip-flop deletes

@@ -41,11 +41,14 @@ import * as Schema from "@notionhq/workers/schema";
 
 ### Step 1: Choose a Mode
 
+The deciding factor is **API capability**, not dataset size. The question is whether the source API supports the queries needed for incremental syncing.
+
 | Condition | Mode |
 |---|---|
-| Total records < 10k | `replace` |
-| API has no `updated_at` or change feed | `replace` |
-| Records > 10k AND API has good change tracking | `incremental` |
+| API supports filtering by `updated_at`, change feeds, or event streams | `incremental` |
+| API only supports listing all records (no change tracking) | `replace` |
+
+Enterprise APIs (Linear, Salesforce, GitHub, Stripe, HubSpot) almost always support `updated_since` filters or equivalent — use `incremental`. Simpler APIs (small web services, scraped data, flat file exports) often have no change tracking at all — use `replace`.
 
 **`replace`**: Each cycle returns the full dataset. After the final `hasMore: false`, any records not seen during that cycle are deleted automatically. Simpler — no backfill/delta distinction.
 
@@ -226,7 +229,7 @@ changes: [{
 2. **Missing the backfill-to-delta transition** — the delta cursor must be seeded from a marker captured *before* the backfill started. Otherwise changes during backfill are lost permanently.
 3. **Not understanding state persistence** — in incremental mode, the cursor never resets. The next cycle starts exactly where the last one left off. Records behind the cursor are never re-fetched. A buffer that's too small or a transition that's off by one causes permanent data loss.
 4. **Not paginating** — returning too many changes at once. Start with batches of ~100.
-5. **Using replace mode for large datasets** (>10k records)
+5. **Using replace mode when the API supports change tracking** — if the API has `updated_at` filters or event feeds, use incremental to avoid re-fetching everything each cycle
 6. **Cursor that doesn't advance** — infinite loop. Ensure `nextState` changes between iterations.
 7. **Missing consistency buffer** on eventually consistent APIs — the cursor will permanently skip records not yet indexed.
 8. **Forgetting first-run handling** — `state` is `undefined` on first call. Use `state?.cursor ?? null`.
