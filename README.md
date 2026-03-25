@@ -1,7 +1,7 @@
 # Notion Workers [alpha]
 
 A worker is a small Node/TypeScript program hosted by Notion that you can use
-to build tool calls for Notion custom agents.
+to build tool calls for Notion custom agents and sync external data into Notion databases.
 
 > [!WARNING]
 >
@@ -55,6 +55,53 @@ ntn workers deploy
 In Notion, add the tool call to your agent:
 
 ![Adding a custom tool to your Notion agent](docs/custom-tool.png)
+
+## Syncing External Data
+
+Workers can sync data from any external source into Notion databases. Each sync creates and maintains a database that stays up to date automatically.
+
+```ts
+import { Worker } from "@notionhq/workers";
+import * as Builder from "@notionhq/workers/builder";
+import * as Schema from "@notionhq/workers/schema";
+
+const worker = new Worker();
+export default worker;
+
+worker.sync("issuesSync", {
+	primaryKeyProperty: "Issue ID",
+	schema: {
+		defaultName: "Issues",
+		properties: {
+			Title: Schema.title(),
+			"Issue ID": Schema.richText(),
+		},
+	},
+	execute: async () => {
+		const issues = await fetchIssues(); // your data source
+		return {
+			changes: issues.map((issue) => ({
+				type: "upsert" as const,
+				key: issue.id,
+				properties: {
+					Title: Builder.title(issue.title),
+					"Issue ID": Builder.richText(issue.id),
+				},
+			})),
+			hasMore: false,
+		};
+	},
+});
+```
+
+After deploying, your sync runs automatically on a schedule (default: every 30 minutes). Monitor it with:
+
+```shell
+ntn workers sync status
+```
+
+> [!NOTE]
+> Deploying does **not** reset sync state — syncs resume from their last cursor position. To restart a sync from scratch, use `ntn workers sync state reset <key>`.
 
 ## Authentication & Secrets
 
@@ -128,6 +175,42 @@ worker.tool("getGitHubRepos", {
 ## What you can build
 
 <details open>
+<summary><strong>Sync external data into Notion</strong></summary>
+
+```ts
+worker.sync("customersSync", {
+	primaryKeyProperty: "Customer ID",
+	schema: {
+		defaultName: "Customers",
+		properties: {
+			Name: Schema.title(),
+			"Customer ID": Schema.richText(),
+			Email: Schema.richText(),
+		},
+	},
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		const { customers, hasMore } = await fetchCustomers(page);
+		return {
+			changes: customers.map((c) => ({
+				type: "upsert" as const,
+				key: c.id,
+				properties: {
+					Name: Builder.title(c.name),
+					"Customer ID": Builder.richText(c.id),
+					Email: Builder.richText(c.email),
+				},
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
+	},
+});
+```
+
+</details>
+
+<details>
 <summary><strong>Give Agents a phone with Twilio</strong></summary>
 
 ```ts
@@ -255,6 +338,25 @@ ntn workers deploy
 
 # Test a tool locally
 ntn workers exec <toolName>
+
+# Monitor sync status (live-updating)
+ntn workers sync status
+
+# Preview sync output without writing to the database
+ntn workers sync dry-run <syncKey>
+
+# Trigger a real sync immediately (writes to the database, bypasses schedule)
+ntn workers sync force-run <syncKey>
+
+# Reset sync state (restart from scratch)
+ntn workers sync state reset <syncKey>
+
+# List all capabilities
+ntn workers capabilities list
+
+# Pause / resume a sync
+ntn workers capabilities disable <syncKey>
+ntn workers capabilities enable <syncKey>
 
 # Manage authentication
 ntn login

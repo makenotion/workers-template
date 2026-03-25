@@ -7,73 +7,212 @@
 - Generated: `dist/` build output, `workers.json` CLI config.
 
 ## Worker & Capability API (SDK)
-`@notionhq/workers` provides `Worker`, schema helpers, and builders; the `ntn` CLI powers worker management.
-
-### Agent tool calls
+- `@notionhq/workers` provides `Worker`, schema helpers, and builders; the `ntn` CLI powers worker management.
+- Capability keys are unique strings used by the CLI (e.g., `ntn workers exec tasksSync`).
 
 ```ts
 import { Worker } from "@notionhq/workers";
-import * as j from "@notionhq/workers/schema-builder";
+import * as Builder from "@notionhq/workers/builder";
+import * as Schema from "@notionhq/workers/schema";
 
 const worker = new Worker();
 export default worker;
 
+worker.sync("tasksSync", {
+	primaryKeyProperty: "ID",
+	schema: { defaultName: "Tasks", properties: { Name: Schema.title(), ID: Schema.richText() } },
+	execute: async (_state, { notion }) => ({
+		changes: [{ type: "upsert", key: "1", properties: { Name: Builder.title("Write docs"), ID: Builder.richText("1") } }],
+		hasMore: false,
+	}),
+});
+
 worker.tool("sayHello", {
 	title: "Say Hello",
 	description: "Return a greeting",
-	schema: j.object({
-		name: j.string().description("The name to greet"),
-	}),
-	execute: ({ name }, _context) => `Hello, ${name}`,
+	schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false },
+	execute: ({ name }, { notion }) => `Hello, ${name}`,
 });
+
+worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
 ```
 
-A worker with one or more tools is attachable to Notion agents. Each `tool` becomes a callable function for the agent:
-- `title` and `description` are used both in the Notion UI as well as a helpful description to your agent.
-- `schema` specifies what data the agent must supply. Use the schema builder (`@notionhq/workers/schema-builder`) instead of raw JSON Schema objects — it provides autocompletion, type inference, and guarantees compliance with model provider constraints (auto `required`, `additionalProperties: false`, etc.).
+- All `execute` handlers receive a Notion SDK client in the second argument as `context.notion`.
 
-### OAuth
+- For user-managed OAuth, supply `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
+- After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
 
-```
-const myOAuth = worker.oauth("myOAuth", {
-	name: "my-provider",
-	authorizationEndpoint: "https://provider.example.com/oauth/authorize",
-	tokenEndpoint: "https://provider.example.com/oauth/token",
-	scope: "read write",
-	clientId: "1234567890",
-	clientSecret: process.env.MY_CUSTOM_OAUTH_CLIENT_SECRET ?? "",
-	authorizationParams: {
-		access_type: "offline",
-		prompt: "consent",
+### Sync
+#### Strategy and Pagination
+
+Syncs run in a "sync cycle": a back-to-back chain of `execute` calls that starts at a scheduled trigger and ends when an execution returns `hasMore: false`. By default, syncs run every 30 minutes. Set `schedule` to an interval like `"15m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`), or `"continuous"` to run as fast as possible.
+
+- Always use pagination, when available. Returning too many changes in one execution will fail. Start with batch sizes of ~100 changes.
+- `mode=replace` is simpler, and fine for smaller syncs (<10k)
+- Use `mode=incremental` when the sync could return a lot of data (>10k), eg for SaaS tools like Salesforce or Stripe
+- When using `mode=incremental`, emit delete markers as needed if easy to do (below)
+
+**Sync strategy (`mode`):**
+- `replace`: each sync cycle must return the full dataset. After the final `hasMore: false`, any records not seen during that cycle are deleted.
+- `incremental`: each sync cycle returns a subset of the full dataset (usually the changes since the last run). Deletions must be explicit via `{ type: "delete", key: "..." }`. Records not mentioned are left unchanged.
+
+**How pagination works:**
+1. Return a batch of changes with `hasMore: true` and a `nextState` value
+2. The runtime calls `execute` again with that state
+3. Continue until you return `hasMore: false`
+
+**Example replace sync:**
+
+```ts
+worker.sync("paginatedSync", {
+	mode: "replace",
+	primaryKeyProperty: "ID",
+	schema: { defaultName: "Records", properties: { Name: Schema.title(), ID: Schema.richText() } },
+	execute: async (state, { notion }) => {
+		const page = state?.page ?? 1;
+		const pageSize = 100;
+		const { items, hasMore } = await fetchPage(page, pageSize);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert",
+				key: item.id,
+				properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
 	},
 });
 ```
 
-The OAuth capability allows you to perform the three legged OAuth flow after specifying parameters of your OAuth client: `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
+**State types:** The `nextState` can be any serializable value—a cursor string, page number, timestamp, or complex object. Type your execute function's `state` to match.
 
-After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
+**Incremental example (changes only, with deletes):**
+```ts
+worker.sync("incrementalSync", {
+	primaryKeyProperty: "ID",
+	mode: "incremental",
+	schema: { defaultName: "Records", properties: { Name: Schema.title(), ID: Schema.richText() } },
+	execute: async (state, { notion }) => {
+		const { upserts, deletes, nextCursor } = await fetchChanges(state?.cursor);
+		return {
+			changes: [
+				...upserts.map((item) => ({
+					type: "upsert",
+					key: item.id,
+					properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
+				})),
+				...deletes.map((id) => ({ type: "delete", key: id })),
+			],
+			hasMore: Boolean(nextCursor),
+			nextState: nextCursor ? { cursor: nextCursor } : undefined,
+		};
+	},
+});
+```
 
-**OAuth setup order:** Deploy → `ntn workers env push` (secrets must be available remotely) → set redirect URL → `ntn workers oauth start`. The deployed worker needs the client secret to exchange the authorization code for tokens, so `env push` must happen before `oauth start`.
+#### Relations
 
-### Other capabilities
+Two syncs can relate to one another using `Schema.relation(relatedSyncKey)` and `Builder.relation(primaryKey)` entries inside an array.
 
-There are additional capability types in the SDK but these are restricted to a private alpha. Only Agent tools and OAuth are generally available.
+```ts
+worker.sync("projectsSync", {
+	primaryKeyProperty: "Project ID",
+	...
+});
 
-| Capability | Availability |
-|------------|--------------|
-| Agent tools | Generally available |
-| OAuth (user-managed) | Generally available |
-| OAuth (Notion-managed) | Private alpha |
-| Syncs | Private alpha |
-| Automations | Private alpha |
+// Example sync worker that syncs sample tasks to a database
+worker.sync("tasksSync", {
+	primaryKeyProperty: "Task ID",
+	...
+	schema: {
+		...
+		properties: {
+			...
+			Project: Schema.relation("projectsSync", {
+				// Optionally configure a two-way relation. This will automatically create the
+				// "Tasks" property on the project synced database: there is no need
+				// to configure "Tasks" on the projectSync capability.
+				twoWay: true, relatedPropertyName: "Tasks"
+			}),
+		},
+	},
+
+	execute: async () => {
+		// Return sample tasks as database entries
+		const tasks = fetchTasks()
+		const changes = tasks.map((task) => ({
+			type: "upsert" as const,
+			key: task.id,
+			properties: {
+				...
+				Project: [Builder.relation(task.projectId)],
+			},
+		}));
+
+		return {
+			changes,
+			hasMore: false,
+		};
+	},
+});
+```
+
+### Sync Management (CLI)
+
+**Monitor sync status:**
+```shell
+ntn workers sync status              # live-updating watch mode (polls every 5s)
+ntn workers sync status <key>        # filter to a specific sync capability
+ntn workers sync status --no-watch   # print once and exit
+ntn workers sync status --interval 10 # custom poll interval in seconds
+```
+
+Status labels:
+- **HEALTHY** — last run succeeded
+- **INITIALIZING** — deployed but hasn't succeeded yet
+- **WARNING** — 1–2 consecutive failures
+- **ERROR** — 3+ consecutive failures
+- **DISABLED** — capability is disabled
+
+**Dry-run a sync (preview without writing):**
+```shell
+ntn workers sync dry-run <key>                   # run execute, show objects, don't write to the database
+ntn workers sync dry-run <key> --context '{"page":2}'  # resume from a previous dry-run's nextContext
+```
+Dry-run calls your sync's `execute` function and shows the objects it would produce, but **does not write anything to the Notion database**. Use it to verify your sync logic and inspect the data before committing to a real run. When piped, outputs raw JSON.
+
+**Force-run a sync (write immediately, bypass schedule):**
+```shell
+ntn workers sync force-run <key>
+```
+Force-run triggers a **real** sync cycle that writes to the database, bypassing the normal schedule. Use it to push changes immediately rather than waiting for the next scheduled run.
+
+**Reset sync state (restart from scratch):**
+```shell
+ntn workers sync state reset <key>
+```
+Clears the cursor and stats so the next run starts from the beginning.
+
+**Enable / disable a sync:**
+```shell
+ntn workers capabilities list            # show all capabilities
+ntn workers capabilities disable <key>   # pause a sync
+ntn workers capabilities enable <key>    # resume a sync
+```
+
+> **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.
 
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
 - `npm run build`: compile TypeScript to `dist/`.
 - `npm run check`: type-check only (no emit).
 - `ntn login`: connect to a Notion workspace.
-- `ntn workers deploy`: build and publish capabilities.
-- `ntn workers exec <capability> -d '<json>'`: run a sync or tool. Run after `deploy` or with `--local`.
+- `ntn workers deploy`: build and publish capabilities. Does not reset sync state.
+- `ntn workers exec <capability>`: run a sync or tool.
+- `ntn workers sync status`: monitor sync health (live-updating).
+- `ntn workers sync dry-run <key>`: preview sync output without writing to the database.
+- `ntn workers sync force-run <key>`: trigger a real sync immediately (writes to the database).
 
 ## Debugging & Monitoring Runs
 Use `ntn workers runs` to inspect run history and logs.
@@ -100,9 +239,32 @@ ntn workers runs list --plain | grep tasksSync | head -n1 | cut -f1 | xargs -I{}
 
 The `--plain` flag outputs tab-separated values without formatting, making it easy to pipe to other commands.
 
-**Print out CLI configuration debug overview (Markdown):**
+### Debugging Syncs
+
+**Check sync health:**
 ```shell
-ntn debug
+ntn workers sync status
+```
+Look at failure counts, error messages, and last succeeded times.
+
+**Sync not running?** Check if the capability is disabled:
+```shell
+ntn workers capabilities list
+```
+
+**Preview what a sync would produce (without writing):**
+```shell
+ntn workers sync dry-run <key>
+```
+
+**Retry a failed sync (writes to the database):**
+```shell
+ntn workers sync force-run <key>
+```
+
+**Sync in a bad state?** Reset the cursor and restart:
+```shell
+ntn workers sync state reset <key>
 ```
 
 ## Coding Style & Naming Conventions
