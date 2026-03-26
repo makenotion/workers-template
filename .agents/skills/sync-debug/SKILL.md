@@ -89,7 +89,7 @@ Common failure patterns and their fixes:
 **Network / Transient Errors**
 - Single occurrence: may be transient — check if subsequent runs succeeded
 - Repeated: check the API endpoint URL, DNS, connectivity
-- Force a retry: `ntn workers sync force-run <key>`
+- Force a retry: `ntn workers sync trigger <key>`
 
 ### Step 6: Fix and Verify
 
@@ -97,5 +97,5 @@ After identifying the issue:
 1. Apply the fix to the code
 2. Run `npm run check` to verify types
 3. If the state shape changed, warn the user they may need `ntn workers sync state reset <key>` (this triggers a full re-backfill)
-4. Deploy and dry-run to verify: suggest `/sync-dry-run` or run `ntn workers deploy && ntn workers sync dry-run <key>`
-5. When the fix is verified, `ntn workers sync force-run <key>` to resume
+4. Deploy and preview to verify: suggest `/sync-preview` or run `ntn workers deploy && ntn workers sync trigger <key> --preview`
+5. When the fix is verified, `ntn workers sync trigger <key>` to resume

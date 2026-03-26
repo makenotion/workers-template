@@ -175,7 +175,7 @@ reading a static token from `process.env`.
 
 Note: OAuth syncs can't be fully tested locally since the OAuth flow requires
 a deployed worker. Local testing will fail at the `.accessToken()` call. This
-is fine — proceed to deploy and test via dry-run (Step 8).
+is fine — proceed to deploy and test via preview (Step 8).
 
 ### Step 6: Generate the Code
 
@@ -259,10 +259,10 @@ Test the sync before deploying. This catches bugs early without a deploy cycle.
 
 **For syncs using OAuth (Pattern B):**
 Local execution won't work because `.accessToken()` requires a deployed worker
-with a completed OAuth flow. Skip to Step 8 (deploy + dry-run) instead.
+with a completed OAuth flow. Skip to Step 8 (deploy + preview) instead.
 You can still run `npm run check` to verify types compile.
 
-### Step 8: Deploy and Validate with Dry-Run
+### Step 8: Deploy and Validate with Preview
 
 Once local testing passes (or immediately for OAuth syncs), deploy and test remotely.
 
@@ -277,21 +277,21 @@ Otherwise, the simpler flow:
 1. `ntn workers deploy` — build and publish
 2. `ntn workers env push` — push `.env` secrets to remote
 
-Then, if the sync uses OAuth, complete the OAuth flow before dry-running.
+Then, if the sync uses OAuth, complete the OAuth flow before previewing.
 **Important:** `env push` must happen before `oauth start` — the deployed worker needs the client secret to exchange the authorization code for tokens.
    - `ntn workers oauth show-redirect-url` — get the redirect URL
    - Tell the user to configure this URL in their OAuth provider's app settings
    - `ntn workers oauth start <oauthKey>` — opens browser to complete the OAuth flow
-4. `ntn workers sync dry-run <syncKey>` — execute remotely without writing to Notion
+4. `ntn workers sync trigger <syncKey> --preview` — execute remotely without writing to Notion
    - Inspect the output: record count, property values, hasMore status
-   - If `hasMore: true`, continue: `ntn workers sync dry-run <syncKey> --context '<nextState>'`
-5. If the dry-run shows issues, fix the code and redeploy (go back to step 1)
+   - If `hasMore: true`, continue: `ntn workers sync trigger <syncKey> --preview --context '<nextState>'`
+5. If the preview shows issues, fix the code and redeploy (go back to step 1)
 
 ### Step 9: Go Live
 
-When the dry-run looks good:
+When the preview looks good:
 
-1. `ntn workers sync force-run <key>` — trigger a real sync
+1. `ntn workers sync trigger <key>` — trigger a real sync
 2. `ntn workers sync status` — check that the sync is running and progressing
 3. `ntn workers runs list` then `ntn workers runs logs <runId>` — check for errors
 4. Run `ntn workers sync status` again to confirm progress (record count increasing, no errors)

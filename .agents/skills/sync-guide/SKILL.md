@@ -240,12 +240,12 @@ changes: [{
 # Deploy
 ntn workers deploy
 
-# Dry-run (test without writing)
-ntn workers sync dry-run <key>
-ntn workers sync dry-run <key> --context '<json>'  # continue pagination
+# Preview (test without writing)
+ntn workers sync trigger <key> --preview
+ntn workers sync trigger <key> --preview --context '<json>'  # continue pagination
 
-# Force a sync run
-ntn workers sync force-run <key>
+# Trigger a sync run
+ntn workers sync trigger <key>
 
 # Check sync status
 ntn workers sync status

@@ -175,18 +175,18 @@ Status labels:
 - **ERROR** — 3+ consecutive failures
 - **DISABLED** — capability is disabled
 
-**Dry-run a sync (preview without writing):**
+**Preview a sync (inspect output without writing):**
 ```shell
-ntn workers sync dry-run <key>                   # run execute, show objects, don't write to the database
-ntn workers sync dry-run <key> --context '{"page":2}'  # resume from a previous dry-run's nextContext
+ntn workers sync trigger <key> --preview                   # run execute, show objects, don't write to the database
+ntn workers sync trigger <key> --preview --context '{"page":2}'  # resume from a previous preview's nextContext
 ```
-Dry-run calls your sync's `execute` function and shows the objects it would produce, but **does not write anything to the Notion database**. Use it to verify your sync logic and inspect the data before committing to a real run. When piped, outputs raw JSON.
+Preview calls your sync's `execute` function and shows the objects it would produce, but **does not write anything to the Notion database**. Use it to verify your sync logic and inspect the data before committing to a real run. When piped, outputs raw JSON.
 
-**Force-run a sync (write immediately, bypass schedule):**
+**Trigger a sync (write immediately, bypass schedule):**
 ```shell
-ntn workers sync force-run <key>
+ntn workers sync trigger <key>
 ```
-Force-run triggers a **real** sync cycle that writes to the database, bypassing the normal schedule. Use it to push changes immediately rather than waiting for the next scheduled run.
+Trigger starts a **real** sync cycle that writes to the database, bypassing the normal schedule. Use it to push changes immediately rather than waiting for the next scheduled run.
 
 **Reset sync state (restart from scratch):**
 ```shell
@@ -211,8 +211,8 @@ ntn workers capabilities enable <key>    # resume a sync
 - `ntn workers deploy`: build and publish capabilities. Does not reset sync state.
 - `ntn workers exec <capability>`: run a sync or tool.
 - `ntn workers sync status`: monitor sync health (live-updating).
-- `ntn workers sync dry-run <key>`: preview sync output without writing to the database.
-- `ntn workers sync force-run <key>`: trigger a real sync immediately (writes to the database).
+- `ntn workers sync trigger <key> --preview`: preview sync output without writing to the database.
+- `ntn workers sync trigger <key>`: trigger a real sync immediately (writes to the database).
 
 ## Debugging & Monitoring Runs
 Use `ntn workers runs` to inspect run history and logs.
@@ -254,12 +254,12 @@ ntn workers capabilities list
 
 **Preview what a sync would produce (without writing):**
 ```shell
-ntn workers sync dry-run <key>
+ntn workers sync trigger <key> --preview
 ```
 
 **Retry a failed sync (writes to the database):**
 ```shell
-ntn workers sync force-run <key>
+ntn workers sync trigger <key>
 ```
 
 **Sync in a bad state?** Reset the cursor and restart:

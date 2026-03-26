@@ -298,8 +298,8 @@ worker.sync("tasksSync", {
 
 ```shell
 ntn workers sync status              # live-updating status
-ntn workers sync dry-run <key>       # preview output without writing to the database
-ntn workers sync force-run <key>     # trigger a real sync immediately
+ntn workers sync trigger <key> --preview  # preview output without writing to the database
+ntn workers sync trigger <key>           # trigger a real sync immediately
 ntn workers sync state reset <key>   # restart from scratch
 ntn workers capabilities disable <key>  # pause a sync
 ntn workers capabilities enable <key>   # resume a sync
@@ -540,10 +540,10 @@ ntn workers exec <toolName> --local -d '{"key": "value"}'
 ntn workers sync status
 
 # Preview sync output without writing to the database
-ntn workers sync dry-run <syncKey>
+ntn workers sync trigger <syncKey> --preview
 
 # Trigger a real sync immediately (writes to the database, bypasses schedule)
-ntn workers sync force-run <syncKey>
+ntn workers sync trigger <syncKey>
 
 # Reset sync state (restart from scratch)
 ntn workers sync state reset <syncKey>
