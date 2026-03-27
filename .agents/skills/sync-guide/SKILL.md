@@ -1,6 +1,6 @@
 ---
 name: sync-guide
-description: Comprehensive guide to building Notion Workers syncs — covers modes (replace vs incremental), pagination, bi-modal cursor design (backfill vs delta), backfill-to-delta transitions, consistency buffers, deletion strategies, and common pitfalls. Auto-loads when sync-related work is detected.
+description: Comprehensive guide to building Notion Workers syncs — covers the two-sync architecture (backfill+delta), replace mode, pagination, consistency buffers, pacers, deletion strategies, and common pitfalls. Auto-loads when sync-related work is detected.
 user-invocable: false
 ---
 
@@ -9,15 +9,20 @@ user-invocable: false
 A sync is a recurring `execute` function that returns data changes to populate a Notion database. The runtime calls `execute` in a loop:
 
 ```ts
-worker.sync("mySync", {
+const db = worker.database("myDb", {
+  type: "managed",
+  initialTitle: "My Data",
   primaryKeyProperty: "ID",
   schema: {
-    defaultName: "My Data",
     properties: {
       Name: Schema.title(),
       ID: Schema.richText(),
     },
   },
+});
+
+worker.sync("mySync", {
+  database: db,
   execute: async (state, { notion }) => ({
     changes: [
       { type: "upsert", key: "1", properties: { Name: Builder.title("Item 1"), ID: Builder.richText("1") } },
@@ -39,61 +44,37 @@ import * as Schema from "@notionhq/workers/schema";
 
 ## Decision Framework
 
-### Step 1: Choose a Mode
+### Step 1: Choose an Architecture
 
-The deciding factor is **API capability**, not dataset size. The question is whether the source API supports the queries needed for incremental syncing.
+The deciding factor is **API capability and dataset size**. Two tiers:
 
-| Condition | Mode |
+| Condition | Architecture |
 |---|---|
-| API supports filtering by `updated_at`, change feeds, or event streams | `incremental` |
-| API only supports listing all records (no change tracking) | `replace` |
+| Small source (<1k records) or API with no change tracking | **Simple replace sync** — one sync, `mode: "replace"` |
+| Everything else (API supports `updated_at`, change feeds, events) | **Backfill + delta pair** — two syncs writing to the same database |
 
-Enterprise APIs (Linear, Salesforce, GitHub, Stripe, HubSpot) almost always support `updated_since` filters or equivalent — use `incremental`. Simpler APIs (small web services, scraped data, flat file exports) often have no change tracking at all — use `replace`.
+**Simple replace sync**: One sync returns the full dataset each cycle. After the final `hasMore: false`, any records not seen are deleted automatically. Use when the dataset is small enough to re-fetch entirely.
 
-**`replace`**: Each cycle returns the full dataset. After the final `hasMore: false`, any records not seen during that cycle are deleted automatically. Simpler — no backfill/delta distinction.
-
-**`incremental`**: Each cycle returns only changes since the last run. The cursor persists across cycles indefinitely. Deletions must be explicit via `{ type: "delete", key: "..." }`.
+**Backfill + delta pair**: Two syncs share a single database. The **backfill sync** (`mode: "replace"`, `schedule: "manual"`) re-fetches everything when triggered. The **delta sync** (`mode: "incremental"`, frequent schedule) fetches only changes since the last run. This separates concerns cleanly — no bi-modal state machine, no backfill-to-delta transition bugs.
 
 ### Step 2: Understand Your API's Pagination
 
 Most APIs require paginating through results. Return batches of ~100 changes. Returning too many changes in one `execute` call will fail.
 
-**Backfill pagination** (initial full dataset load):
+**Backfill pagination** (full dataset load):
 1. **Opaque cursor token** — GraphQL `endCursor`, Stripe `starting_after`
 2. **Page number / offset** — `?page=N&limit=100`
 3. **Keyset (timestamp + id)** — `WHERE created_at > X OR (created_at = X AND id > Y)` — the gold standard for timestamp-sorted mutable data
 
-**Delta pagination** (subsequent change-only loads, incremental mode):
+**Delta pagination** (change-only loads, incremental mode):
 1. **Timestamp cursor** — `?updated_since=<cursor>` with consistency buffer
 2. **Keyset on updated_at + id** — same keyset pattern on the modification timestamp
 3. **Event/changelog feed** — `GET /events?after=<eventId>`
 4. **Same opaque cursor** — when the API sorts by `updated_at`, the backfill cursor works for delta too
 
-### Step 3: Understand the Bi-Modal Nature of Syncs
+### Step 3: Consistency Buffer (Delta Syncs)
 
-In incremental mode, a sync is a state machine with two phases:
-
-1. **Backfill** (first run): paginate through the entire dataset
-2. **Delta** (subsequent runs): fetch only what changed since the last run
-
-These phases often use different pagination strategies and different cursor shapes. The state should be a discriminated union:
-
-```ts
-type State =
-  | { phase: "backfill"; cursor: string | null; backfillStartedAt: string }
-  | { phase: "delta"; cursor: string };
-```
-
-In replace mode, there is no backfill/delta distinction. Each cycle re-fetches everything. State is just within-cycle pagination.
-
-### Step 4: Handle the Transition and Edge Cases
-
-**Backfill-to-delta transition** — The most common source of bugs. Three strategies:
-1. **Event anchor:** Before backfill starts (first `execute` call), capture the latest event ID. When backfill completes, seed delta from that anchor.
-2. **Timestamp overlap:** Seed delta cursor to `backfillStartedAt - 5 minutes` to avoid missing records that arrived during the backfill.
-3. **Cursor carry-forward:** If backfill and delta use the same cursor type (e.g., API sorts by `updated_at`), just keep the cursor.
-
-**Consistency buffer** — APIs tend to be eventually consistent. A record that was just written or updated may not appear in query results immediately. Since the cursor never resets in incremental mode, if it advances past a record that hasn't been indexed yet, that record is skipped permanently. Lag the cursor 10-60 seconds behind "now":
+APIs tend to be eventually consistent. A record that was just written or updated may not appear in query results immediately. Since the cursor never resets in incremental mode, if it advances past a record that hasn't been indexed yet, that record is skipped permanently. Lag the cursor 10-60 seconds behind "now":
 
 ```ts
 const bufferMs = 15_000;
@@ -103,25 +84,38 @@ const nextCursor = records.length > 0
   : maxCursor;
 ```
 
-**Deletion strategies:**
-1. **Replace mode:** free — unseen records auto-delete each cycle
-2. **Incremental with delete API:** emit `{ type: "delete", key }` markers. If the delete signal comes from a separate endpoint (audit log, archived filter), use the **flip-flop pattern**: run the main delta stream until caught up (`hasMore: false`), then switch to the delete stream for a cycle, then back. Both cursors persist in state independently.
-3. **No delete API:** consider replace mode, or accept stale records
+### Step 4: Deletion Strategies
+
+1. **Backfill sync (replace mode)**: free — unseen records are auto-deleted each cycle. This is the primary mechanism for handling deletes when the API has no delete signal.
+2. **Delta sync with delete API**: emit `{ type: "delete", key }` markers. If the delete signal comes from a separate endpoint (audit log, archived filter), use the **flip-flop pattern**: run the main delta stream until caught up (`hasMore: false`), then switch to the delete stream for a cycle, then back. Both cursors persist in state independently.
+3. **No delete API, large dataset**: rely on the backfill sync's replace-mode mark-and-sweep. Trigger the backfill manually or on a slow schedule to clean up stale records.
 
 ## Replace Mode
 
-Simple: fetch everything, return it all, let the runtime handle deletes.
+Simple: fetch everything, return it all, let the runtime handle deletes. Use as a standalone sync for small sources, or as the backfill half of a backfill+delta pair.
 
 ```ts
-worker.sync("mySync", {
-  mode: "replace",
+const db = worker.database("records", {
+  type: "managed",
+  initialTitle: "Records",
   primaryKeyProperty: "ID",
   schema: {
-    defaultName: "Records",
     properties: { Name: Schema.title(), ID: Schema.richText() },
   },
+});
+
+const apiPacer = worker.pacer("myApi", {
+  allowedRequests: 10,
+  intervalMs: 1000,
+});
+
+worker.sync("recordsBackfill", {
+  database: db,
+  mode: "replace",
+  schedule: "manual",  // trigger manually or on a slow schedule
   execute: async (state) => {
     const page = state?.page ?? 1;
+    await apiPacer.wait();
     const { items, totalPages } = await fetchPage(page, 100);
     const hasMore = page < totalPages;
     return {
@@ -139,50 +133,41 @@ worker.sync("mySync", {
 
 See `examples/replace-simple.ts` and `examples/replace-paginated.ts` for complete working examples.
 
-## Incremental Mode
+## Incremental Mode (Delta Sync)
 
-The execute function must handle both phases:
+The delta sync fetches only changes since the last run. When paired with a replace-mode backfill sync on the same database, this replaces the old bi-modal single-sync pattern.
 
 ```ts
-worker.sync("mySync", {
+// Reuses the same `db` and `apiPacer` from above
+
+worker.sync("recordsDelta", {
+  database: db,
   mode: "incremental",
-  primaryKeyProperty: "ID",
-  schema: {
-    defaultName: "Records",
-    properties: { Name: Schema.title(), ID: Schema.richText() },
-  },
-  execute: async (state: State | undefined) => {
-    if (!state || state.phase === "backfill") {
-      // Backfill: paginate full dataset
-      const startedAt = state?.backfillStartedAt ?? new Date().toISOString();
-      const { items, nextCursor } = await fetchAll(state?.cursor);
-      const done = !nextCursor;
-
-      return {
-        changes: items.map(toUpsert),
-        hasMore: !done,
-        nextState: done
-          ? { phase: "delta", cursor: subtractMinutes(startedAt, 5) }
-          : { phase: "backfill", cursor: nextCursor, backfillStartedAt: startedAt },
-      };
-    }
-
-    // Delta: fetch only changes since cursor
+  schedule: "5m",
+  execute: async (state: { cursor: string } | undefined) => {
+    const cursor = state?.cursor ?? new Date(0).toISOString();
     const bufferTs = new Date(Date.now() - 15_000).toISOString();
-    const { items, nextCursor } = await fetchChanges(state.cursor);
+
+    await apiPacer.wait();
+    const { items, nextCursor } = await fetchChanges(cursor);
     const done = !nextCursor;
 
     return {
       changes: items.map(toUpsert),
       hasMore: !done,
       nextState: {
-        phase: "delta",
-        cursor: done ? min(nextCursor ?? state.cursor, bufferTs) : nextCursor,
+        cursor: done ? min(nextCursor ?? cursor, bufferTs) : nextCursor,
       },
     };
   },
 });
 ```
+
+**Key points:**
+- The delta sync's state is simple — just a cursor. No phase discrimination needed.
+- The backfill sync (replace mode) handles the initial full load and periodic cleanup of deleted records.
+- Both syncs write to the same database via the shared `db` handle.
+- The pacer is shared between syncs — the server apportions the budget evenly.
 
 See `examples/incremental-basic.ts`, `examples/incremental-bimodal.ts`, and `examples/incremental-events.ts` for complete patterns.
 
@@ -225,14 +210,14 @@ changes: [{
 
 ## Common Mistakes
 
-1. **Treating the sync as single-mode** — writing one cursor strategy for both backfill and delta. These are typically different strategies with different cursor shapes.
-2. **Missing the backfill-to-delta transition** — the delta cursor must be seeded from a marker captured *before* the backfill started. Otherwise changes during backfill are lost permanently.
-3. **Not understanding state persistence** — in incremental mode, the cursor never resets. The next cycle starts exactly where the last one left off. Records behind the cursor are never re-fetched. A buffer that's too small or a transition that's off by one causes permanent data loss.
-4. **Not paginating** — returning too many changes at once. Start with batches of ~100.
-5. **Using replace mode when the API supports change tracking** — if the API has `updated_at` filters or event feeds, use incremental to avoid re-fetching everything each cycle
-6. **Cursor that doesn't advance** — infinite loop. Ensure `nextState` changes between iterations.
-7. **Missing consistency buffer** on eventually consistent APIs — the cursor will permanently skip records not yet indexed.
-8. **Forgetting first-run handling** — `state` is `undefined` on first call. Use `state?.cursor ?? null`.
+1. **Not using a pacer** — every API call inside `execute` should be preceded by `await apiPacer.wait()`. Without it, syncs will hit rate limits and fail.
+2. **Missing consistency buffer on delta syncs** — the cursor will permanently skip records not yet indexed in eventually consistent APIs.
+3. **Not paginating** — returning too many changes at once. Start with batches of ~100.
+4. **Using replace mode for large datasets** — if the API supports change tracking, pair a replace-mode backfill sync with an incremental delta sync instead of re-fetching everything each cycle.
+5. **Cursor that doesn't advance** — infinite loop. Ensure `nextState` changes between iterations.
+6. **Forgetting first-run handling** — `state` is `undefined` on first call. Use `state?.cursor ?? null`.
+7. **Forgetting that backfill + delta share a database** — both syncs must use the same `worker.database()` handle and the same key/properties shape.
+8. **Not triggering the backfill sync** — the backfill sync with `schedule: "manual"` won't run automatically. Trigger it on deploy or periodically to clean up deleted records.
 
 ## CLI Commands for Sync Development
 
