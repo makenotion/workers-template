@@ -57,26 +57,34 @@ ntn workers deploy
 A sync pulls data from an external source into a Notion database. Here's a simple sync in `src/index.ts`:
 
 ```ts
-import { Worker } from "@notionhq/workers";
+import { Worker, Pacer } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 
 const worker = new Worker();
 export default worker;
 
-worker.sync("issuesSync", {
+const issues = worker.database("issues", {
+	type: "managed",
+	initialTitle: "Issues",
 	primaryKeyProperty: "Issue ID",
 	schema: {
-		defaultName: "Issues",
 		properties: {
 			Title: Schema.title(),
 			"Issue ID": Schema.richText(),
 		},
 	},
+});
+
+worker.pacer("issueTracker", { allowedRequests: 10, intervalMs: 1000 });
+
+worker.sync("issuesSync", {
+	database: issues,
 	execute: async () => {
-		const issues = await fetchIssues(); // your data source
+		await Pacer.wait("issueTracker");
+		const items = await fetchIssues(); // your data source
 		return {
-			changes: issues.map((issue) => ({
+			changes: items.map((issue) => ({
 				type: "upsert" as const,
 				key: issue.id,
 				properties: {
@@ -148,21 +156,25 @@ execute: async (input, context) => {
 
 ## Syncs reference
 
-### Schema and builders
+### Databases and schema
 
-Define the database schema with `Schema` helpers and build property values with `Builder`:
+Declare databases with `worker.database()` and define schemas with `Schema` helpers. Build property values with `Builder`:
 
 ```ts
 import * as Schema from "@notionhq/workers/schema";
 import * as Builder from "@notionhq/workers/builder";
 
-schema: {
-	defaultName: "My Data",
-	properties: {
-		Name: Schema.title(),
-		ID: Schema.richText(),
+const records = worker.database("records", {
+	type: "managed",
+	initialTitle: "My Data",
+	primaryKeyProperty: "ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			ID: Schema.richText(),
+		},
 	},
-}
+});
 
 // In execute, return changes with matching property values:
 properties: {
@@ -179,11 +191,11 @@ properties: {
 
 ```ts
 worker.sync("teamsSync", {
+	database: teams,
 	mode: "replace",
-	primaryKeyProperty: "ID",
-	schema: { defaultName: "Teams", properties: { Name: Schema.title(), ID: Schema.richText() } },
 	execute: async (state) => {
 		const page = state?.page ?? 1;
+		await Pacer.wait("myApi");
 		const { items, hasMore } = await fetchPage(page, 100);
 		return {
 			changes: items.map((item) => ({
@@ -202,10 +214,10 @@ worker.sync("teamsSync", {
 
 ```ts
 worker.sync("eventsSync", {
+	database: events,
 	mode: "incremental",
-	primaryKeyProperty: "ID",
-	schema: { defaultName: "Events", properties: { Name: Schema.title(), ID: Schema.richText() } },
 	execute: async (state) => {
+		await Pacer.wait("myApi");
 		const { upserts, deletes, nextCursor } = await fetchChanges(state?.cursor);
 		return {
 			changes: [
@@ -223,7 +235,7 @@ worker.sync("eventsSync", {
 });
 ```
 
-Use `replace` for smaller datasets (<10k records). Use `incremental` for larger datasets or when the API supports change tracking.
+Use `replace` for smaller datasets (<1k records). Use `incremental` for larger datasets or when the API supports change tracking.
 
 ### Pagination
 
@@ -237,10 +249,11 @@ Syncs run as a chain of `execute` calls within a sync cycle:
 
 ### Schedule
 
-By default syncs run every 30 minutes. Set `schedule` to an interval like `"15m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`), or `"continuous"`:
+By default syncs run every 30 minutes. Set `schedule` to an interval like `"15m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`), `"continuous"`, or `"manual"`:
 
 ```ts
 worker.sync("fastSync", {
+	database: myDb,
 	schedule: "5m",
 	// ...
 });
@@ -248,25 +261,26 @@ worker.sync("fastSync", {
 
 ### Relations
 
-Two syncs can relate their rows to each other using `Schema.relation()` and `Builder.relation()`:
+Two databases can relate to each other using `Schema.relation()` and `Builder.relation()`:
 
 ```ts
-worker.sync("projectsSync", {
+const projects = worker.database("projects", {
+	type: "managed",
+	initialTitle: "Projects",
 	primaryKeyProperty: "Project ID",
 	schema: {
-		defaultName: "Projects",
 		properties: {
 			Name: Schema.title(),
 			"Project ID": Schema.richText(),
 		},
 	},
-	execute: async () => { /* ... */ },
 });
 
-worker.sync("tasksSync", {
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
 	primaryKeyProperty: "Task ID",
 	schema: {
-		defaultName: "Tasks",
 		properties: {
 			Name: Schema.title(),
 			"Task ID": Schema.richText(),
@@ -276,10 +290,19 @@ worker.sync("tasksSync", {
 			}),
 		},
 	},
+});
+
+worker.sync("projectsSync", {
+	database: projects,
+	execute: async () => { /* ... */ },
+});
+
+worker.sync("tasksSync", {
+	database: tasks,
 	execute: async () => {
-		const tasks = await fetchTasks();
+		const items = await fetchTasks();
 		return {
-			changes: tasks.map((task) => ({
+			changes: items.map((task) => ({
 				type: "upsert" as const,
 				key: task.id,
 				properties: {
@@ -375,21 +398,29 @@ worker.tool("getGitHubRepos", {
 <summary><strong>Sync external data into Notion</strong></summary>
 
 ```ts
-worker.sync("customersSync", {
+const customers = worker.database("customers", {
+	type: "managed",
+	initialTitle: "Customers",
 	primaryKeyProperty: "Customer ID",
 	schema: {
-		defaultName: "Customers",
 		properties: {
 			Name: Schema.title(),
 			"Customer ID": Schema.richText(),
 			Email: Schema.richText(),
 		},
 	},
+});
+
+worker.pacer("crm", { allowedRequests: 10, intervalMs: 1000 });
+
+worker.sync("customersSync", {
+	database: customers,
 	execute: async (state) => {
 		const page = state?.page ?? 1;
-		const { customers, hasMore } = await fetchCustomers(page);
+		await Pacer.wait("crm");
+		const { customers: items, hasMore } = await fetchCustomers(page);
 		return {
-			changes: customers.map((c) => ({
+			changes: items.map((c) => ({
 				type: "upsert" as const,
 				key: c.id,
 				properties: {
