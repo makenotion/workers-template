@@ -11,7 +11,7 @@
 - Capability keys are unique strings used by the CLI (e.g., `ntn workers exec tasksSync`).
 
 ```ts
-import { Worker, Pacer } from "@notionhq/workers";
+import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 
@@ -27,13 +27,13 @@ const tasks = worker.database("tasks", {
 });
 
 // Declare a pacer for the upstream API
-worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
 
 // Declare a sync that writes to the database
 worker.sync("tasksSync", {
 	database: tasks,
 	execute: async (state) => {
-		await Pacer.wait("myApi");
+		await myApi.wait();
 		const items = await fetchItems(state?.page ?? 1);
 		return {
 			changes: items.map((i) => ({
@@ -82,14 +82,14 @@ const tasks = worker.database("tasks", {
 });
 
 // 2. Declare a pacer for the upstream API
-worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
 
 // 3. Declare a sync
 worker.sync("tasksSync", {
 	database: tasks,
 	schedule: "30m",
 	execute: async (state) => {
-		await Pacer.wait("myApi");
+		await myApi.wait();
 		const { items, hasMore } = await fetchTasks(state?.page ?? 1);
 		return {
 			changes: items.map((item) => ({
@@ -114,15 +114,15 @@ Multiple syncs can write to the same database. Multiple syncs can share a pacer 
 
 **Always declare a pacer** for any sync that calls an external API. Research the API's rate limits before implementing. If the limits are variable (e.g. Salesforce, where you can purchase more API calls), ask the user what budget to allocate.
 
-- Call `await Pacer.wait(key)` before **every** API request inside `execute`.
+- Call `await pacer.wait()` before **every** API request inside `execute`.
 - The pacer ensures requests are evenly spaced over the interval window.
 - If 4 syncs share a pacer with `allowedRequests: 100, intervalMs: 60_000`, each sync gets ~25 requests/minute.
 
 ```ts
-import { Pacer } from "@notionhq/workers";
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
 
 // Inside execute:
-await Pacer.wait("myApi");
+await myApi.wait();
 const data = await fetchFromApi();
 ```
 
@@ -152,7 +152,7 @@ const records = worker.database("records", {
 	schema: { properties: { Name: Schema.title(), ID: Schema.richText() } },
 });
 
-worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
 
 worker.sync("recordsSync", {
 	database: records,
@@ -160,7 +160,7 @@ worker.sync("recordsSync", {
 	schedule: "1h",
 	execute: async (state) => {
 		const page = state?.page ?? 1;
-		await Pacer.wait("myApi");
+		await myApi.wait();
 		const { items, hasMore } = await fetchPage(page, 100);
 		return {
 			changes: items.map((item) => ({
@@ -191,7 +191,7 @@ const tasks = worker.database("tasks", {
 	},
 });
 
-worker.pacer("taskApi", { allowedRequests: 10, intervalMs: 1000 });
+const taskApi = worker.pacer("taskApi", { allowedRequests: 10, intervalMs: 1000 });
 
 // Backfill: paginates full dataset, runs manually.
 // To re-backfill: ntn workers sync state reset tasksBackfill && ntn workers sync trigger tasksBackfill
@@ -201,7 +201,7 @@ worker.sync("tasksBackfill", {
 	schedule: "manual",
 	execute: async (state) => {
 		const page = state?.page ?? 1;
-		await Pacer.wait("taskApi");
+		await taskApi.wait();
 		const { items, hasMore } = await fetchAllTasks(page, 100);
 		return {
 			changes: items.map((item) => ({
@@ -226,7 +226,7 @@ worker.sync("tasksDelta", {
 	schedule: "5m",
 	execute: async (state) => {
 		const cursor = state?.cursor;
-		await Pacer.wait("taskApi");
+		await taskApi.wait();
 		const { items, nextCursor } = await fetchTaskChanges(cursor);
 		return {
 			changes: items.map((item) => ({

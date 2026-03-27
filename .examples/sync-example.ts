@@ -8,7 +8,7 @@
  * - Backfill + delta sync pattern
  */
 
-import { Worker, Pacer } from "@notionhq/workers";
+import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 
@@ -18,7 +18,7 @@ export default worker;
 // -- Pacer: rate-limit requests to the upstream API --
 // Research the API's rate limits and declare them here.
 // If multiple syncs share a pacer, the budget is apportioned evenly.
-worker.pacer("exampleApi", {
+const exampleApi = worker.pacer("exampleApi", {
 	allowedRequests: 10, // 10 requests
 	intervalMs: 1000, // per second
 });
@@ -66,7 +66,7 @@ worker.sync("projectsSync", {
 	schedule: "1h",
 	execute: async (state) => {
 		const page = state?.page ?? 1;
-		await Pacer.wait("exampleApi");
+		await exampleApi.wait();
 		const { items, hasMore } = await fetchProjects(page);
 
 		return {
@@ -97,7 +97,7 @@ worker.sync("tasksBackfill", {
 	schedule: "manual",
 	execute: async (state) => {
 		const page = state?.page ?? 1;
-		await Pacer.wait("exampleApi");
+		await exampleApi.wait();
 		const { items, hasMore } = await fetchAllTasks(page);
 
 		return {
@@ -126,7 +126,7 @@ worker.sync("tasksDelta", {
 	schedule: "5m",
 	execute: async (state) => {
 		const cursor = state?.cursor;
-		await Pacer.wait("exampleApi");
+		await exampleApi.wait();
 		const { items, nextCursor } = await fetchTaskChanges(cursor);
 
 		return {

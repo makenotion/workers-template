@@ -57,7 +57,7 @@ ntn workers deploy
 A sync pulls data from an external source into a Notion database. Here's a simple sync in `src/index.ts`:
 
 ```ts
-import { Worker, Pacer } from "@notionhq/workers";
+import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
 import * as Schema from "@notionhq/workers/schema";
 
@@ -76,12 +76,12 @@ const issues = worker.database("issues", {
 	},
 });
 
-worker.pacer("issueTracker", { allowedRequests: 10, intervalMs: 1000 });
+const issueTracker = worker.pacer("issueTracker", { allowedRequests: 10, intervalMs: 1000 });
 
 worker.sync("issuesSync", {
 	database: issues,
 	execute: async () => {
-		await Pacer.wait("issueTracker");
+		await issueTracker.wait();
 		const items = await fetchIssues(); // your data source
 		return {
 			changes: items.map((issue) => ({
@@ -195,7 +195,7 @@ worker.sync("teamsSync", {
 	mode: "replace",
 	execute: async (state) => {
 		const page = state?.page ?? 1;
-		await Pacer.wait("myApi");
+		await myApi.wait();
 		const { items, hasMore } = await fetchPage(page, 100);
 		return {
 			changes: items.map((item) => ({
@@ -217,7 +217,7 @@ worker.sync("eventsSync", {
 	database: events,
 	mode: "incremental",
 	execute: async (state) => {
-		await Pacer.wait("myApi");
+		await myApi.wait();
 		const { upserts, deletes, nextCursor } = await fetchChanges(state?.cursor);
 		return {
 			changes: [
@@ -411,13 +411,13 @@ const customers = worker.database("customers", {
 	},
 });
 
-worker.pacer("crm", { allowedRequests: 10, intervalMs: 1000 });
+const crm = worker.pacer("crm", { allowedRequests: 10, intervalMs: 1000 });
 
 worker.sync("customersSync", {
 	database: customers,
 	execute: async (state) => {
 		const page = state?.page ?? 1;
-		await Pacer.wait("crm");
+		await crm.wait();
 		const { customers: items, hasMore } = await fetchCustomers(page);
 		return {
 			changes: items.map((c) => ({
