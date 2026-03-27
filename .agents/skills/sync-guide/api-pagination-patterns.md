@@ -2,6 +2,8 @@
 
 Strategies drawn from production syncs with Salesforce, Stripe, HubSpot, GitHub, and ServiceNow. Intended as a reference for building Notion Workers syncs.
 
+> **v2 SDK:** Code snippets use the v2 SDK shape. Databases are declared separately via `worker.database()` and syncs reference them by handle. For APIs with change tracking, the recommended architecture is a **backfill sync** (`mode: "replace"`, `schedule: "manual"`) paired with a **delta sync** (`mode: "incremental"`).
+
 ---
 
 ## The Universal Contract
@@ -43,15 +45,17 @@ Identical keyset pattern but on `SystemModstamp` (Salesforce's last-modified tim
 
 ### Cursor Design
 
-Two separate cursor shapes, unified in a discriminated state:
+With separate backfill and delta syncs, each has its own simple cursor:
 
 ```ts
-type SalesforceState =
-  | { phase: "backfill"; cursorTimestamp: string | null; cursorId: string | null; backfillStartedAt: string }
-  | { phase: "delta"; cursorTimestamp: string; cursorId: string };
+// Backfill cursor (within-cycle pagination for replace mode)
+type SalesforceBackfillState = { cursorTimestamp: string; cursorId: string };
+
+// Delta cursor (persists across cycles in incremental mode)
+type SalesforceDeltaState = { cursorTimestamp: string; cursorId: string };
 ```
 
-The `backfillStartedAt` marks when the backfill *began*. When the backfill completes, the delta cursor is initialized to `backfillStartedAt - 5 minutes`, ensuring overlap. This prevents the gap between "last record seen during backfill" and "first change detected by delta."
+Since the backfill is a replace-mode sync, its state is only used for within-cycle pagination. The delta sync's cursor persists across cycles and tracks the last-seen `SystemModstamp`.
 
 ### Gotcha: Unreliable `done` Flag
 
@@ -59,33 +63,39 @@ Salesforce returns a `done` boolean in query results. It lies. The production co
 
 ### Workers Mapping
 
+With the v2 SDK, this is modeled as two syncs: a manual backfill (replace) and a scheduled delta (incremental).
+
 ```ts
-worker.sync("salesforceSync", {
+const db = worker.database("salesforce_accounts");
+
+// Backfill: keyset pagination on CreatedDate — run manually to seed data
+worker.sync("salesforceBackfill", {
+  database: db,
+  mode: "replace",
+  schedule: "manual",
+  execute: async (state: { cursorTimestamp: string; cursorId: string } | undefined) => {
+    // Keyset query: WHERE CreatedDate > X OR (CreatedDate = X AND Id > Y)
+    // ORDER BY CreatedDate, Id LIMIT 100
+    const records = await querySOQL(state?.cursorTimestamp, state?.cursorId);
+    const last = records[records.length - 1];
+    const done = records.length < 100;
+
+    return {
+      changes: records.map(toUpsert),
+      hasMore: !done,
+      nextState: done ? undefined : { cursorTimestamp: last.CreatedDate, cursorId: last.Id },
+    };
+  },
+});
+
+// Delta: keyset on SystemModstamp, with 15s consistency buffer
+worker.sync("salesforceDelta", {
+  database: db,
   mode: "incremental",
-  execute: async (state: SalesforceState | undefined) => {
-    const phase = state?.phase ?? "backfill";
-    const backfillStartedAt = state?.backfillStartedAt ?? new Date().toISOString();
-
-    if (phase === "backfill") {
-      // Keyset query: WHERE CreatedDate > X OR (CreatedDate = X AND Id > Y)
-      // ORDER BY CreatedDate, Id LIMIT 100
-      const records = await querySOQL(state?.cursorTimestamp, state?.cursorId);
-      const last = records[records.length - 1];
-      const done = records.length < 100;
-
-      return {
-        changes: records.map(toUpsert),
-        hasMore: !done,
-        // When backfill is done, transition to delta with overlap
-        nextState: done
-          ? { phase: "delta", cursorTimestamp: subtractMinutes(backfillStartedAt, 5), cursorId: "" }
-          : { phase: "backfill", cursorTimestamp: last.CreatedDate, cursorId: last.Id, backfillStartedAt },
-      };
-    }
-
-    // Delta: same keyset but on SystemModstamp, with 15s consistency buffer
+  schedule: { cron: "*/5 * * * *" },
+  execute: async (state: { cursorTimestamp: string; cursorId: string } | undefined) => {
     const bufferTs = new Date(Date.now() - 15_000).toISOString();
-    const records = await querySOQL(state.cursorTimestamp, state.cursorId, "SystemModstamp");
+    const records = await querySOQL(state?.cursorTimestamp, state?.cursorId, "SystemModstamp");
     const last = records[records.length - 1];
     const done = records.length < 100;
 
@@ -93,9 +103,8 @@ worker.sync("salesforceSync", {
       changes: records.map(toUpsert),
       hasMore: !done,
       nextState: {
-        phase: "delta",
-        cursorTimestamp: done ? min(last?.SystemModstamp ?? state.cursorTimestamp, bufferTs) : last.SystemModstamp,
-        cursorId: last?.Id ?? state.cursorId,
+        cursorTimestamp: done ? min(last?.SystemModstamp ?? state?.cursorTimestamp, bufferTs) : last.SystemModstamp,
+        cursorId: last?.Id ?? state?.cursorId,
       },
     };
   },
@@ -125,42 +134,51 @@ Stripe objects contain nested sub-objects (e.g., a `PaymentIntent` contains `pay
 
 ### Cursor Design
 
+With separate syncs, each cursor is simple:
+
 ```ts
-type StripeState =
-  | { phase: "backfill"; cursor: string | null; eventAnchor: string | null; startedAt: string }
-  | { phase: "delta"; cursor: string };
+// Backfill cursor (within-cycle pagination for replace mode)
+type StripeBackfillState = { cursor: string | null };
+
+// Delta cursor (event ID, persists across cycles)
+type StripeDeltaState = { cursor: string };
 ```
 
 ### Workers Mapping
 
+Two syncs: a manual backfill and a scheduled delta reading from the events endpoint.
+
 ```ts
-worker.sync("stripeSync", {
+const db = worker.database("stripe_customers");
+
+// Backfill: paginate all customers, capture event anchor for delta handoff
+worker.sync("stripeBackfill", {
+  database: db,
+  mode: "replace",
+  schedule: "manual",
+  execute: async (state: { cursor: string | null } | undefined) => {
+    const { data, has_more } = await stripe.customers.list({
+      starting_after: state?.cursor ?? undefined,
+      limit: 100,
+    });
+    const last = data[data.length - 1];
+
+    return {
+      changes: data.map(toUpsert),
+      hasMore: has_more,
+      nextState: has_more ? { cursor: last.id } : undefined,
+    };
+  },
+});
+
+// Delta: read events, skip any < 10s old
+worker.sync("stripeDelta", {
+  database: db,
   mode: "incremental",
-  execute: async (state: StripeState | undefined) => {
-    if (!state || state.phase === "backfill") {
-      // First call: capture event anchor before fetching any data
-      const eventAnchor = state?.eventAnchor ?? (await getLatestEventId());
-      const cursor = state?.cursor ?? null;
-
-      const { data, has_more } = await stripe.customers.list({
-        starting_after: cursor ?? undefined,
-        limit: 100,
-      });
-      const last = data[data.length - 1];
-
-      return {
-        changes: data.map(toUpsert),
-        hasMore: has_more,
-        // When backfill is done, transition to delta starting from the anchored event
-        nextState: has_more
-          ? { phase: "backfill", cursor: last.id, eventAnchor, startedAt: state?.startedAt ?? new Date().toISOString() }
-          : { phase: "delta", cursor: eventAnchor },
-      };
-    }
-
-    // Delta: read events, skip any < 10s old
+  schedule: { cron: "*/5 * * * *" },
+  execute: async (state: { cursor: string } | undefined) => {
     const { data: events, has_more } = await stripe.events.list({
-      ending_before: state.cursor,
+      ending_before: state?.cursor,
       limit: 100,
     });
     const safeEvents = events.filter(e => e.created < Date.now() / 1000 - 10);
@@ -170,7 +188,7 @@ worker.sync("stripeSync", {
     return {
       changes,
       hasMore: has_more && safeEvents.length > 0,
-      nextState: { phase: "delta", cursor: lastSafe?.id ?? state.cursor },
+      nextState: { cursor: lastSafe?.id ?? state?.cursor },
     };
   },
 });
@@ -201,34 +219,53 @@ The most instructive edge case across all sources. HubSpot's Search API only sor
 
 ### Cursor Design
 
+With separate syncs, the backfill cursor is simple. The delta sync still needs a multi-phase state for deadlock handling:
+
 ```ts
-type HubSpotState =
-  | { phase: "backfill"; afterToken: string | null; startedAt: number }
+// Backfill cursor (within-cycle pagination for replace mode)
+type HubSpotBackfillState = { afterToken: string | null };
+
+// Delta cursor (deadlock handling requires multi-phase state)
+type HubSpotDeltaState =
   | { phase: "delta"; cursorMs: number }
   | { phase: "deadlock"; deadlockMs: number; lastId: string; resumeCursorMs: number };
 ```
 
 ### Workers Mapping
 
+Two syncs: a manual backfill using the List endpoint, and a delta sync using the Search endpoint with deadlock handling.
+
 ```ts
-worker.sync("hubspotSync", {
+const db = worker.database("hubspot_contacts");
+
+// Backfill: paginate using opaque after token
+worker.sync("hubspotBackfill", {
+  database: db,
+  mode: "replace",
+  schedule: "manual",
+  execute: async (state: { afterToken: string | null } | undefined) => {
+    const { results, paging } = await hubspotList(state?.afterToken);
+    const hasMore = Boolean(paging?.next?.after);
+
+    return {
+      changes: results.map(toUpsert),
+      hasMore,
+      nextState: hasMore ? { afterToken: paging.next.after } : undefined,
+    };
+  },
+});
+
+// Delta: search by lastmodifieddate with deadlock handling
+type HubSpotDeltaState =
+  | { phase: "delta"; cursorMs: number }
+  | { phase: "deadlock"; deadlockMs: number; lastId: string; resumeCursorMs: number };
+
+worker.sync("hubspotDelta", {
+  database: db,
   mode: "incremental",
-  execute: async (state: HubSpotState | undefined) => {
-    if (!state || state.phase === "backfill") {
-      const startedAt = state?.startedAt ?? Date.now();
-      const { results, paging } = await hubspotList(state?.afterToken);
-      const hasMore = Boolean(paging?.next?.after);
-
-      return {
-        changes: results.map(toUpsert),
-        hasMore,
-        nextState: hasMore
-          ? { phase: "backfill", afterToken: paging.next.after, startedAt }
-          : { phase: "delta", cursorMs: startedAt - 5 * 60 * 1000 }, // 5min overlap
-      };
-    }
-
-    if (state.phase === "deadlock") {
+  schedule: { cron: "*/5 * * * *" },
+  execute: async (state: HubSpotDeltaState | undefined) => {
+    if (state?.phase === "deadlock") {
       // Page through records at the stuck timestamp by ID
       const results = await hubspotSearch({
         filter: { lastmodifieddate: { eq: state.deadlockMs } },
@@ -254,8 +291,9 @@ worker.sync("hubspotSync", {
 
     // Normal delta: search by lastmodifieddate >= cursorMs
     const bufferMs = Date.now() - 10_000;
+    const cursorMs = state?.cursorMs ?? Date.now() - 5 * 60 * 1000;
     const results = await hubspotSearch({
-      filter: { lastmodifieddate: { gte: state.cursorMs } },
+      filter: { lastmodifieddate: { gte: cursorMs } },
       limit: 100,
     });
 
@@ -327,8 +365,12 @@ type GitHubState = {
 ### Workers Mapping
 
 ```ts
+const db = worker.database("github_repos");
+
 worker.sync("githubSync", {
-  mode: "replace", // GitHub GraphQL has no good incremental signal without webhooks
+  database: db,
+  mode: "replace",
+  schedule: { cron: "0 * * * *" }, // GitHub GraphQL has no good incremental signal without webhooks
   execute: async (state: GitHubState | undefined) => {
     // For flat collections (e.g., repos): simple Relay pagination
     const { data, pageInfo } = await graphql(query, { after: state?.cursor });
@@ -381,9 +423,14 @@ This is a subtle but important distinction. Backfill is exhaustive; delta assume
 
 ### Cursor Design
 
+With separate syncs, the backfill cursor is simple. The delta sync uses a flip-flop state for delete detection:
+
 ```ts
-type ServiceNowState =
-  | { phase: "backfill"; afterTimestamp: string | null; afterId: string | null; backfillStartedAt: string }
+// Backfill cursor (within-cycle pagination for replace mode)
+type ServiceNowBackfillState = { afterTimestamp: string | null; afterId: string | null };
+
+// Delta cursor (flip-flop between changes and deletes)
+type ServiceNowDeltaState =
   | { phase: "delta"; afterTimestamp: string; afterId: string;
       deletesCursor?: { afterCreatedOn: string; afterId: string } }
   | { phase: "deletes"; afterCreatedOn: string; afterId: string;
@@ -456,28 +503,19 @@ const nextCursor = records.length > 0
 
 **Used by:** Stripe, Salesforce, HubSpot
 
-Before starting a backfill, snapshot the current position of the change feed (event ID, timestamp, etc.). After the backfill completes, start the delta from that snapshot — not from the end of the backfill data.
+Before starting a backfill, snapshot the current position of the change feed (event ID, timestamp, etc.). The delta sync should start from that snapshot — not from the end of the backfill data.
 
 **Why:** The backfill may take hours. Records change during that time. Without the anchor, changes between "backfill started" and "backfill ended" are lost permanently (since the cursor never goes backwards).
+
+**v2 SDK note:** With separate backfill and delta syncs, the event anchor is handled by starting the delta sync before or concurrently with the backfill. The delta sync's cursor naturally captures the starting point. If you need explicit coordination, snapshot the event anchor before triggering the backfill and initialize the delta sync's cursor from it.
 
 **Workers implementation:**
 
 ```ts
-// First execute call (state is undefined):
+// Snapshot the anchor before triggering the backfill
 const eventAnchor = await getLatestEventId();
-// ... fetch first page of backfill data ...
-return {
-  changes,
-  hasMore: true,
-  nextState: { phase: "backfill", cursor: lastId, eventAnchor },
-};
-
-// When backfill completes:
-return {
-  changes: lastPage,
-  hasMore: true, // or false — either way, nextState persists
-  nextState: { phase: "delta", cursor: state.eventAnchor },
-};
+// Initialize the delta sync's cursor to start from this anchor
+// The backfill (replace, manual) handles seeding all existing data
 ```
 
 ### Pattern 4: Sweep = Replace Mode
@@ -486,18 +524,17 @@ When an API has no `updated_at`, no change feed, and no deletion signal, use `mo
 
 ### Pattern 5: Multi-Phase State Machine
 
-**Used by:** HubSpot (deadlock handling), all incremental syncs (backfill/delta)
+**Used by:** HubSpot (deadlock handling), ServiceNow (flip-flop deletes)
 
-Model the state as a discriminated union:
+Model the state as a discriminated union when a single sync needs multiple phases:
 
 ```ts
 type State =
-  | { phase: "backfill"; cursor: string | null; startedAt: string }
   | { phase: "delta"; cursor: string }
   | { phase: "deadlock"; stuckAt: number; lastId: string; resumeCursor: string };
 ```
 
-Each `execute` call checks `state.phase` and runs the appropriate logic. The simplest version is two phases (backfill + delta). More complex sources add phases for edge cases (deadlock, deletes).
+Each `execute` call checks `state.phase` and runs the appropriate logic. In the v2 SDK, backfill and delta are typically **separate syncs** (backfill as `replace` + `manual`, delta as `incremental`), so the state machine within a single sync is simpler. Multi-phase state machines are still useful for edge cases within a delta sync (deadlock handling, flip-flop deletes).
 
 ### Pattern 6: Stream Flip-Flop (Single-Stream Delete Detection)
 
@@ -599,13 +636,16 @@ Does the API have an events/changelog endpoint?
 Does the API support change tracking (updated_at / modified_since / change feed)?
 ├─ No → replace (simpler, auto-handles deletes)
 │
-├─ Yes
-│  ├─ → incremental
+├─ Yes → backfill (replace, manual) + delta (incremental, scheduled)
+│  │
+│  │  The backfill sync seeds the database on-demand.
+│  │  The delta sync keeps it up-to-date on a schedule.
+│  │  Both target the same worker.database() handle.
 │  │
 │  └─ Does the API support deletion detection?
-│     ├─ Yes (archived filter, audit log, events) → incremental with flip-flop deletes
-│     ├─ No, but deletions matter → replace (re-fetches everything, catches deletes)
-│     └─ No, and deletions don't matter → incremental (accept stale records)
+│     ├─ Yes (archived filter, audit log, events) → delta sync with flip-flop deletes
+│     ├─ No, but deletions matter → replace only (re-fetches everything, catches deletes)
+│     └─ No, and deletions don't matter → incremental delta (accept stale records)
 ```
 
 ---

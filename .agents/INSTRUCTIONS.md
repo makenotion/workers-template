@@ -18,13 +18,31 @@ import * as Schema from "@notionhq/workers/schema";
 const worker = new Worker();
 export default worker;
 
-worker.sync("tasksSync", {
+// Declare a database
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
 	primaryKeyProperty: "ID",
-	schema: { defaultName: "Tasks", properties: { Name: Schema.title(), ID: Schema.richText() } },
-	execute: async (_state, { notion }) => ({
-		changes: [{ type: "upsert", key: "1", properties: { Name: Builder.title("Write docs"), ID: Builder.richText("1") } }],
-		hasMore: false,
-	}),
+	schema: { properties: { Name: Schema.title(), ID: Schema.richText() } },
+});
+
+// Declare a pacer for the upstream API
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// Declare a sync that writes to the database
+worker.sync("tasksSync", {
+	database: tasks,
+	execute: async (state) => {
+		await myApi.wait();
+		const items = await fetchItems(state?.page ?? 1);
+		return {
+			changes: items.map((i) => ({
+				type: "upsert" as const, key: i.id,
+				properties: { Name: Builder.title(i.name), ID: Builder.richText(i.id) },
+			})),
+			hasMore: false,
+		};
+	},
 });
 
 worker.tool("sayHello", {
@@ -43,38 +61,110 @@ worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
 - After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
 
 ### Sync
-#### Strategy and Pagination
 
-Syncs run in a "sync cycle": a back-to-back chain of `execute` calls that starts at a scheduled trigger and ends when an execution returns `hasMore: false`. By default, syncs run every 30 minutes. Set `schedule` to an interval like `"15m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`), or `"continuous"` to run as fast as possible.
+#### Databases, Pacers, and Syncs
 
-- Always use pagination, when available. Returning too many changes in one execution will fail. Start with batch sizes of ~100 changes.
-- `mode=replace` is simpler, and fine for smaller syncs (<10k)
-- Use `mode=incremental` when the sync could return a lot of data (>10k), eg for SaaS tools like Salesforce or Stripe
-- When using `mode=incremental`, emit delete markers as needed if easy to do (below)
-
-**Sync strategy (`mode`):**
-- `replace`: each sync cycle must return the full dataset. After the final `hasMore: false`, any records not seen during that cycle are deleted.
-- `incremental`: each sync cycle returns a subset of the full dataset (usually the changes since the last run). Deletions must be explicit via `{ type: "delete", key: "..." }`. Records not mentioned are left unchanged.
-
-**How pagination works:**
-1. Return a batch of changes with `hasMore: true` and a `nextState` value
-2. The runtime calls `execute` again with that state
-3. Continue until you return `hasMore: false`
-
-**Example replace sync:**
+Syncs write data into Notion databases. Databases are declared separately and referenced by handle:
 
 ```ts
-worker.sync("paginatedSync", {
-	mode: "replace",
-	primaryKeyProperty: "ID",
-	schema: { defaultName: "Records", properties: { Name: Schema.title(), ID: Schema.richText() } },
-	execute: async (state, { notion }) => {
-		const page = state?.page ?? 1;
-		const pageSize = 100;
-		const { items, hasMore } = await fetchPage(page, pageSize);
+// 1. Declare a database
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "Task ID",
+	schema: {
+		properties: {
+			"Task Name": Schema.title(),
+			"Task ID": Schema.richText(),
+			Status: Schema.select([{ name: "Open" }, { name: "Done", color: "green" }]),
+		},
+	},
+});
+
+// 2. Declare a pacer for the upstream API
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// 3. Declare a sync
+worker.sync("tasksSync", {
+	database: tasks,
+	schedule: "30m",
+	execute: async (state) => {
+		await myApi.wait();
+		const { items, hasMore } = await fetchTasks(state?.page ?? 1);
 		return {
 			changes: items.map((item) => ({
-				type: "upsert",
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+				},
+			})),
+			hasMore,
+			nextState: hasMore ? { page: (state?.page ?? 1) + 1 } : undefined,
+		};
+	},
+});
+```
+
+Multiple syncs can write to the same database. Multiple syncs can share a pacer — the server apportions the budget evenly across all syncs that use it.
+
+#### Pacers (Rate Limiting)
+
+**Always declare a pacer** for any sync that calls an external API. Research the API's rate limits before implementing. If the limits are variable (e.g. Salesforce, where you can purchase more API calls), ask the user what budget to allocate.
+
+- Call `await pacer.wait()` before **every** API request inside `execute`.
+- The pacer ensures requests are evenly spaced over the interval window.
+- If 4 syncs share a pacer with `allowedRequests: 100, intervalMs: 60_000`, each sync gets ~25 requests/minute.
+
+```ts
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// Inside execute:
+await myApi.wait();
+const data = await fetchFromApi();
+```
+
+#### Choosing a Sync Strategy
+
+**Simple replace sync** — For truly small data sources (<1k records) or APIs with no change-tracking support. One sync, replace mode. Every cycle returns the full dataset; records not returned are deleted via mark-and-sweep.
+
+**Backfill + delta pair** — For everything else (recommended for most real integrations). Two syncs writing to the same database:
+- **Backfill** (replace mode, `schedule: "manual"`): Paginates the entire upstream dataset. Triggered manually via CLI. Cleans up drift, backfills new schema properties, catches deletes the delta can't detect.
+- **Delta** (incremental mode, frequent schedule like `"5m"` or `"30m"`): Fetches only recent changes via `updated_since`, change feeds, etc. Keeps Notion current with minimal API usage.
+
+Use backfill + delta whenever the upstream API supports any form of change tracking (`updated_since`, `modified_after`, change feeds, webhooks). Most enterprise APIs do (Salesforce, Jira, Linear, Stripe, GitHub, etc.).
+
+##### Delete handling
+
+- **API supports delta deletes** (returns deleted records in change feed): Emit `{ type: "delete", key }` in the delta sync.
+- **API doesn't, but deletes are rare or irrelevant** (e.g. Stripe subscriptions are canceled not deleted, Jira issues are closed not deleted): No action needed — the upstream record still exists, just in a different state.
+- **API doesn't, and deletes matter**: The backfill sync handles this. Its replace-mode mark-and-sweep deletes records no longer present upstream.
+
+#### Simple Replace Sync Example
+
+```ts
+const records = worker.database("records", {
+	type: "managed",
+	initialTitle: "Records",
+	primaryKeyProperty: "ID",
+	schema: { properties: { Name: Schema.title(), ID: Schema.richText() } },
+});
+
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+worker.sync("recordsSync", {
+	database: records,
+	mode: "replace",
+	schedule: "1h",
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await myApi.wait();
+		const { items, hasMore } = await fetchPage(page, 100);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
 				key: item.id,
 				properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
 			})),
@@ -85,25 +175,69 @@ worker.sync("paginatedSync", {
 });
 ```
 
-**State types:** The `nextState` can be any serializable value—a cursor string, page number, timestamp, or complex object. Type your execute function's `state` to match.
+#### Backfill + Delta Example
 
-**Incremental example (changes only, with deletes):**
 ```ts
-worker.sync("incrementalSync", {
-	primaryKeyProperty: "ID",
-	mode: "incremental",
-	schema: { defaultName: "Records", properties: { Name: Schema.title(), ID: Schema.richText() } },
-	execute: async (state, { notion }) => {
-		const { upserts, deletes, nextCursor } = await fetchChanges(state?.cursor);
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "Task ID",
+	schema: {
+		properties: {
+			"Task Name": Schema.title(),
+			"Task ID": Schema.richText(),
+			Status: Schema.select([{ name: "Open" }, { name: "Done", color: "green" }]),
+		},
+	},
+});
+
+const taskApi = worker.pacer("taskApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// Backfill: paginates full dataset, runs manually.
+// To re-backfill: ntn workers sync state reset tasksBackfill && ntn workers sync trigger tasksBackfill
+worker.sync("tasksBackfill", {
+	database: tasks,
+	mode: "replace",
+	schedule: "manual",
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await taskApi.wait();
+		const { items, hasMore } = await fetchAllTasks(page, 100);
 		return {
-			changes: [
-				...upserts.map((item) => ({
-					type: "upsert",
-					key: item.id,
-					properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
-				})),
-				...deletes.map((id) => ({ type: "delete", key: id })),
-			],
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+				},
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
+	},
+});
+
+// Delta: fetches recent changes, runs every 5 minutes.
+worker.sync("tasksDelta", {
+	database: tasks,
+	mode: "incremental",
+	schedule: "5m",
+	execute: async (state) => {
+		const cursor = state?.cursor;
+		await taskApi.wait();
+		const { items, nextCursor } = await fetchTaskChanges(cursor);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+				},
+			})),
 			hasMore: Boolean(nextCursor),
 			nextState: nextCursor ? { cursor: nextCursor } : undefined,
 		};
@@ -111,50 +245,63 @@ worker.sync("incrementalSync", {
 });
 ```
 
+#### Pagination
+
+Syncs run in a "sync cycle": a back-to-back chain of `execute` calls that starts at a scheduled trigger and ends when an execution returns `hasMore: false`.
+
+- Always paginate. Returning too many changes in one execution will fail. Start with batch sizes of ~100.
+- Return `hasMore: true` and `nextState` to continue; `hasMore: false` to finish.
+- `nextState` can be any serializable value: cursor string, page number, timestamp, or complex object.
+
+#### Schedule
+
+Set `schedule` on a sync to control how often it runs:
+- `"continuous"`: run as fast as possible
+- `"manual"`: only via CLI trigger
+- Interval string: `"5m"`, `"30m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`)
+- Default: `"30m"`
+
 #### Relations
 
-Two syncs can relate to one another using `Schema.relation(relatedSyncKey)` and `Builder.relation(primaryKey)` entries inside an array.
+Two databases can relate to one another using `Schema.relation(syncKey)` and `Builder.relation(primaryKey)`:
 
 ```ts
-worker.sync("projectsSync", {
+const projects = worker.database("projects", {
+	type: "managed",
+	initialTitle: "Projects",
 	primaryKeyProperty: "Project ID",
-	...
+	schema: { properties: { "Project Name": Schema.title(), "Project ID": Schema.richText() } },
 });
 
-// Example sync worker that syncs sample tasks to a database
-worker.sync("tasksSync", {
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
 	primaryKeyProperty: "Task ID",
-	...
 	schema: {
-		...
 		properties: {
-			...
-			Project: Schema.relation("projectsSync", {
-				// Optionally configure a two-way relation. This will automatically create the
-				// "Tasks" property on the project synced database: there is no need
-				// to configure "Tasks" on the projectSync capability.
-				twoWay: true, relatedPropertyName: "Tasks"
-			}),
+			"Task Name": Schema.title(),
+			"Task ID": Schema.richText(),
+			// Reference the sync key that populates the related database
+			Project: Schema.relation("projectsSync", { twoWay: true, relatedPropertyName: "Tasks" }),
 		},
 	},
+});
 
-	execute: async () => {
-		// Return sample tasks as database entries
-		const tasks = fetchTasks()
-		const changes = tasks.map((task) => ({
+worker.sync("projectsSync", { database: projects, execute: async () => { ... } });
+worker.sync("tasksSync", {
+	database: tasks,
+	execute: async () => ({
+		changes: [{
 			type: "upsert" as const,
-			key: task.id,
+			key: "task-1",
 			properties: {
-				...
-				Project: [Builder.relation(task.projectId)],
+				"Task Name": Builder.title("Write docs"),
+				"Task ID": Builder.richText("task-1"),
+				Project: [Builder.relation("proj-1")], // array of relation refs
 			},
-		}));
-
-		return {
-			changes,
-			hasMore: false,
-		};
-	},
+		}],
+		hasMore: false,
+	}),
 });
 ```
 

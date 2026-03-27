@@ -1,5 +1,11 @@
 /**
- * Syncs are only available in a private alpha.
+ * Example: syncing projects and tasks from an external API to Notion.
+ *
+ * Demonstrates:
+ * - Database declarations (hoisted from sync config)
+ * - Pacers for rate limiting upstream API requests
+ * - Relations between databases
+ * - Backfill + delta sync pattern
  */
 
 import { Worker } from "@notionhq/workers";
@@ -9,71 +15,170 @@ import * as Schema from "@notionhq/workers/schema";
 const worker = new Worker();
 export default worker;
 
-const projectId = "project-1";
-const projectName = "Example Project";
+// -- Pacer: rate-limit requests to the upstream API --
+// Research the API's rate limits and declare them here.
+// If multiple syncs share a pacer, the budget is apportioned evenly.
+const exampleApi = worker.pacer("exampleApi", {
+	allowedRequests: 10, // 10 requests
+	intervalMs: 1000, // per second
+});
 
-worker.sync("projectsSync", {
-	// Which field to use in each object as the primary key. Must be unique.
+// -- Databases --
+
+const projects = worker.database("projects", {
+	type: "managed",
+	initialTitle: "Projects",
 	primaryKeyProperty: "Project ID",
-	// The schema of the collection to create in Notion.
 	schema: {
-		// Name of the collection to create in Notion.
-		defaultName: "Projects",
 		properties: {
-			// See `Schema` for the full list of possible column types.
 			"Project Name": Schema.title(),
 			"Project ID": Schema.richText(),
 		},
 	},
-	execute: async () => {
-		// Fetch and return data
+});
+
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "Task ID",
+	schema: {
+		properties: {
+			"Task Name": Schema.title(),
+			"Task ID": Schema.richText(),
+			Status: Schema.select([
+				{ name: "Open", color: "blue" },
+				{ name: "In Progress", color: "yellow" },
+				{ name: "Done", color: "green" },
+			]),
+			Project: Schema.relation("projectsSync", {
+				twoWay: true,
+				relatedPropertyName: "Tasks",
+			}),
+		},
+	},
+});
+
+// -- Simple replace sync for projects (small dataset) --
+
+worker.sync("projectsSync", {
+	database: projects,
+	mode: "replace",
+	schedule: "1h",
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await exampleApi.wait();
+		const { items, hasMore } = await fetchProjects(page);
+
 		return {
-			changes: [
-				// Each change must match the shape of `properties` above.
-				{
-					type: "upsert" as const,
-					key: projectId,
-					properties: {
-						"Project Name": Builder.title(projectName),
-						"Project ID": Builder.richText(projectId),
-					},
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Project Name": Builder.title(item.name),
+					"Project ID": Builder.richText(item.id),
 				},
-			],
-			hasMore: false,
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
 		};
 	},
 });
 
-worker.sync("mySync", {
-	// Which field to use in each object as the primary key. Must be unique.
-	primaryKeyProperty: "ID",
-	// The schema of the collection to create in Notion.
-	schema: {
-		// Name of the collection to create in Notion.
-		defaultName: "My Data",
-		properties: {
-			// See `Schema` for the full list of possible column types.
-			Title: Schema.title(),
-			ID: Schema.richText(),
-			Project: Schema.relation("projectsSync"),
-		},
-	},
-	execute: async (_state, { notion: _notion }) => {
-		// Fetch and return data
+// -- Backfill + delta sync pair for tasks --
+
+// Backfill: paginates the full upstream dataset.
+// Schedule: manual. To run:
+//   ntn workers sync state reset tasksBackfill
+//   ntn workers sync trigger tasksBackfill
+// Replace mode: mark-and-sweep deletes records no longer upstream.
+worker.sync("tasksBackfill", {
+	database: tasks,
+	mode: "replace",
+	schedule: "manual",
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await exampleApi.wait();
+		const { items, hasMore } = await fetchAllTasks(page);
+
 		return {
-			changes: [
-				// Each change must match the shape of `properties` above.
-				{
-					type: "upsert" as const,
-					key: "1",
-					properties: {
-						Title: Builder.title("Item 1"),
-						ID: Builder.richText("1"),
-						Project: [Builder.relation(projectId)],
-					},
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+					Project: [Builder.relation(item.projectId)],
 				},
-			],
-			hasMore: false,
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
 		};
 	},
 });
+
+// Delta: fetches only recent changes.
+// Schedule: runs every 5 minutes to keep Notion up to date.
+// Incremental mode: only returns changes since the last cursor.
+worker.sync("tasksDelta", {
+	database: tasks,
+	mode: "incremental",
+	schedule: "5m",
+	execute: async (state) => {
+		const cursor = state?.cursor;
+		await exampleApi.wait();
+		const { items, nextCursor } = await fetchTaskChanges(cursor);
+
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+					Project: [Builder.relation(item.projectId)],
+				},
+			})),
+			hasMore: Boolean(nextCursor),
+			nextState: nextCursor ? { cursor: nextCursor } : undefined,
+		};
+	},
+});
+
+// -- Placeholder functions (replace with real API calls) --
+
+async function fetchProjects(_page: number) {
+	return {
+		items: [{ id: "proj-1", name: "Example Project" }],
+		hasMore: false,
+	};
+}
+
+async function fetchAllTasks(_page: number) {
+	return {
+		items: [
+			{
+				id: "task-1",
+				name: "Write docs",
+				status: "Open",
+				projectId: "proj-1",
+			},
+		],
+		hasMore: false,
+	};
+}
+
+async function fetchTaskChanges(_cursor: string | undefined) {
+	return {
+		items: [
+			{
+				id: "task-1",
+				name: "Write docs",
+				status: "Done",
+				projectId: "proj-1",
+			},
+		],
+		nextCursor: null as string | null,
+	};
+}

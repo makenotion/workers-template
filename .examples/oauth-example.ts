@@ -1,4 +1,5 @@
 import { Worker } from "@notionhq/workers";
+import * as Schema from "@notionhq/workers/schema";
 import { j } from "@notionhq/workers/schema-builder";
 
 const worker = new Worker();
@@ -41,15 +42,20 @@ const myCustomAuth = worker.oauth("myCustomAuth", {
 });
 
 // Use the OAuth handles in your capabilities
-worker.sync("googleCalendarSync", {
-	primaryKeyProperty: "eventId",
+const calendarEvents = worker.database("calendarEvents", {
+	type: "managed",
+	initialTitle: "Calendar Events",
+	primaryKeyProperty: "Event ID",
 	schema: {
-		defaultName: "Calendar Events",
 		properties: {
-			eventId: { type: "text" },
-			title: { type: "title" },
+			Title: Schema.title(),
+			"Event ID": Schema.richText(),
 		},
 	},
+});
+
+worker.sync("googleCalendarSync", {
+	database: calendarEvents,
 	execute: async () => {
 		// Get the OAuth access token
 		const token = await googleAuth.accessToken();
