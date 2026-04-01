@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
-- `.examples/` has focused samples (sync, tool, automation, OAuth).
+- `.examples/` has focused samples (sync, tool, automation, OAuth, AI connector).
 - Shared agent skills live in `.agents/skills/`. `.claude/skills` is kept as a compatibility symlink for Claude-specific discovery.
 - Generated: `dist/` build output, `workers.json` CLI config.
 
@@ -41,6 +41,25 @@ worker.automation("sendWelcomeEmail", {
 });
 
 worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
+
+worker.aiConnector("discordChat", {
+	aiConnectorId: process.env.AI_CONNECTOR_ID!,
+	archetype: "chat",
+	schedule: "15m",
+	execute: async (state) => {
+		const { records, nextCursor } = await fetchRecords(state?.cursor);
+		return { records, hasMore: Boolean(nextCursor), nextState: nextCursor ? { cursor: nextCursor } : undefined };
+	},
+	executePermissions: async (state) => {
+		const { members, nextCursor } = await fetchMembers(state?.cursor);
+		return {
+			userMappings: members.map((m) => ({ notion_user_id: m.notionId, third_party_user_id: m.externalId })),
+			groupMappings: members.map((m) => ({ third_party_user_id: m.externalId, third_party_group_ids: m.groups })),
+			hasMore: Boolean(nextCursor),
+			nextState: nextCursor ? { cursor: nextCursor } : undefined,
+		};
+	},
+});
 ```
 
 - All `execute` handlers receive a Notion SDK client in the second argument as `context.notion`.
@@ -209,6 +228,89 @@ ntn workers capabilities enable <key>    # resume a sync
 ```
 
 > **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.
+
+### AI Connector
+
+AI Connectors integrate third-party services (e.g. Discord, Slack, Jira) into Notion's search and knowledge graph. Unlike syncs, connectors do not create Notion databases; they feed records and permission mappings directly to Notion's connector infrastructure.
+
+#### Key concepts
+
+- **`aiConnectorId`**: The unique identifier for the connector instance, typically provided via environment variable.
+- **`archetype`**: Determines the record shape the connector produces. Current archetypes: `"chat"` (for messaging platforms) and `"project"` (for project management tools).
+- **`schedule`**: How often the connector runs. Same format as syncs: `"15m"`, `"1h"`, `"1d"`, or `"continuous"`. Defaults to `"30m"`.
+- **`execute`**: Fetches data records from the third-party service. Supports cursor-based pagination via `hasMore` / `nextState`, identical to syncs.
+- **`executePermissions`**: Fetches user and group permission mappings so Notion can enforce access control. Also supports pagination.
+
+#### Record shape
+
+Records returned from `execute` are plain objects whose fields depend on the archetype. For `"chat"`, typical fields include `channel_id`, `channel_name`, `external_url`, `messages`, `permissions_space`, `permissions_users`, and `permissions_groups`.
+
+#### Permissions
+
+`executePermissions` returns two kinds of mappings:
+- **`userMappings`**: Links a Notion user ID to a third-party user ID.
+- **`groupMappings`**: Links a third-party user ID to the group IDs they belong to.
+
+#### Example
+
+```ts
+worker.aiConnector("discordChat", {
+	aiConnectorId: process.env.AI_CONNECTOR_ID!,
+	archetype: "chat",
+	schedule: "15m",
+
+	execute: async (state) => {
+		const cursor = state?.cursor;
+		const { messages, nextCursor } = await fetchDiscordMessages(cursor);
+
+		const records = messages.map((msg) => ({
+			channel_id: msg.channel_id,
+			channel_name: msg.channel_name,
+			external_url: msg.permalink,
+			chat_type: "channel",
+			created_at: msg.created_at,
+			updated_at: msg.updated_at,
+			messages: msg.thread.map((m) => ({
+				id: m.id,
+				content: m.content,
+				author: { id: m.author.id, username: m.author.username },
+				timestamp: m.timestamp,
+			})),
+			permissions_space: msg.is_public,
+			permissions_users: msg.member_ids.map((id) => ({
+				id, type: "third_party_user",
+			})),
+			permissions_groups: [],
+		}));
+
+		return {
+			records,
+			hasMore: Boolean(nextCursor),
+			nextState: nextCursor ? { cursor: nextCursor } : undefined,
+		};
+	},
+
+	executePermissions: async (state) => {
+		const after = state?.memberCursor;
+		const { members, nextCursor } = await fetchDiscordMembers(after);
+
+		return {
+			userMappings: members.map((m) => ({
+				notion_user_id: resolveNotionUser(m.email),
+				third_party_user_id: m.user.id,
+			})),
+			groupMappings: members.map((m) => ({
+				third_party_user_id: m.user.id,
+				third_party_group_ids: m.roles,
+			})),
+			hasMore: Boolean(nextCursor),
+			nextState: nextCursor ? { memberCursor: nextCursor } : undefined,
+		};
+	},
+});
+```
+
+See `.examples/connector-example.ts` for a complete runnable example with placeholder API functions.
 
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
