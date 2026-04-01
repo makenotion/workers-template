@@ -24,26 +24,45 @@ Ask the user:
 
 If they name a well-known API, look up its pagination mechanism and change-tracking capabilities (does it have `updated_at`? an events endpoint? cursor-based pagination?).
 
-### Step 2: Determine the Right Mode
+### Step 2: Determine the Right Architecture
 
-Based on what you know about the data source, make a recommendation. Consider:
-- **API capability (the deciding factor):** Does the API support `updated_at` filters,
-  event feeds, or a changelog? Enterprise APIs (Salesforce, Stripe, Linear, GitHub,
-  HubSpot) almost always do — use `incremental`. Simpler APIs (small web services,
-  scraped data, flat file exports) often have no change tracking — use `replace`.
-- **Change tracking drives the decision, not dataset size.** A Linear workspace may
-  only have a few thousand issues, but its API supports the queries needed for
-  incremental, so incremental is the right choice. Conversely, a website listing
-  local pickleball courts has no `updated_since` endpoint regardless of how many
-  records it has.
+Based on what you know about the data source, recommend one of two architectures:
 
-Recommend a mode with a brief explanation:
-- **replace** if: the API has no change tracking (no `updated_at`, no event feed).
-  Simpler (no backfill/delta), auto-handles deletes, but re-fetches everything each cycle.
-- **incremental** if: the API supports change tracking (`updated_at`, events, changelog).
-  More efficient and requires bi-modal cursor design and explicit delete handling.
+#### Simple replace sync
 
-Let the user override if they disagree.
+Use when: the source is small (<1k records) OR the API has no change tracking
+(no `updated_at`, no event feed).
+
+One sync, replace mode. Re-fetches everything each cycle. The runtime
+auto-deletes records that disappear from the source. Simplest option.
+
+#### Backfill + delta pair
+
+Use when: the API supports change tracking (`updated_at`, events, changelog) —
+this covers most enterprise APIs (Salesforce, Stripe, Linear, GitHub, HubSpot).
+
+Two separate syncs writing to the **same database**:
+
+- **Backfill sync** (replace mode, `schedule: "manual"`): Paginates the full
+  dataset. Triggered manually via CLI when a full re-import is needed. Replace
+  mode's mark-and-sweep automatically cleans up records deleted from the source.
+- **Delta sync** (incremental mode, `schedule: "5m"` or similar): Fetches only
+  recently changed records. Runs on a timer for low-latency updates.
+
+Advantages over a single bi-modal sync:
+- No phase discrimination in state — each sync has simple, focused state
+- No backfill-to-delta transition logic
+- Backfill and delta run independently — re-backfill anytime without disrupting delta
+- Easier to reason about and debug
+
+**Change tracking drives the decision, not dataset size.** A Linear workspace
+may only have a few thousand issues, but its API supports the queries needed
+for delta sync, so backfill+delta is the right choice. Conversely, a website
+listing local pickleball courts has no `updated_since` endpoint regardless of
+how many records it has.
+
+Recommend an architecture with a brief explanation. Let the user override if
+they disagree.
 
 ### Step 3: Design the Schema
 
@@ -53,16 +72,24 @@ to enumerate fields — propose a sensible default and let them adjust.
 
 For example, if syncing Jira issues, propose:
 ```ts
-properties: {
-  "Issue Key": Schema.richText(),    // primaryKeyProperty — the unique ID
-  "Summary": Schema.title(),         // the main display field
-  "Status": Schema.select([...]),    // mapped from Jira statuses
-  "Assignee": Schema.richText(),     // or Schema.people() if email available
-  "Updated": Schema.date(),
-}
+const issuesDb = worker.database("issuesDb", {
+  type: "managed",
+  initialTitle: "Jira Issues",
+  primaryKeyProperty: "Issue Key",
+  schema: {
+    properties: {
+      "Issue Key": Schema.richText(),    // primaryKeyProperty — the unique ID
+      "Summary": Schema.title(),         // the main display field
+      "Status": Schema.select([...]),    // mapped from Jira statuses
+      "Assignee": Schema.richText(),     // or Schema.people() if email available
+      "Updated": Schema.date(),
+    },
+  },
+});
 ```
 
 Guidelines:
+- Declare the database with `worker.database()` and reference the handle in `worker.sync()`
 - Every schema needs exactly one `Schema.title()` — pick the most descriptive field
 - Use `Schema.richText()` for the primary key property (the unique ID)
 - Use `Schema.url()`, `Schema.email()`, `Schema.date()`, `Schema.number()`,
@@ -88,43 +115,51 @@ You need to determine:
 
 Then design the state accordingly:
 
-**For replace-mode syncs:** State is just within-cycle pagination.
+**For simple replace syncs:** State is just within-cycle pagination.
 - Opaque cursor: `{ cursor: string | null }`
 - Page number: `{ page: number }`
 
-**For incremental-mode syncs:** The sync is bi-modal — backfill and delta
-often use different pagination strategies. Design both:
+**For backfill + delta pairs:** Each sync has its own simple state — no
+bi-modal discriminated union needed.
 
-- **Backfill cursor:** How to paginate the full dataset (usually the API's
-  native list pagination — opaque cursor, offset, or keyset)
-- **Delta cursor:** How to track changes (usually timestamp-based, event ID,
-  or the same opaque cursor if the API sorts by `updated_at`)
-- **Transition:** How to seed the delta cursor when backfill completes
-  (event anchor captured before backfill, or `backfillStartedAt - 5 minutes`)
+- **Backfill state:** Just pagination cursor for walking the full dataset.
+  Depends on how the API paginates its list endpoint:
+  - Opaque cursor: `{ cursor: string | null }`
+  - Page number: `{ page: number }`
+  - Keyset: `{ cursorTimestamp: string | null; cursorId: string | null }`
 
-State shape for bi-modal:
-```ts
-type State =
-  | { phase: "backfill"; cursor: string | null; backfillStartedAt: string }
-  | { phase: "delta"; cursor: string };
-```
+- **Delta state:** Change-tracking cursor for fetching recent modifications.
+  Depends on how the API exposes changes:
+  - Opaque cursor (API sorted by updated_at): `{ cursor: string | null }`
+  - Timestamp keyset: `{ cursorTimestamp: string; cursorId: string }`
+  - Event ID: `{ eventCursor: string }`
 
-If the API has no change tracking, go back and recommend replace mode instead.
+**Consistency buffer (delta syncs only):** In incremental mode the cursor
+never resets, so if you advance past a record that hasn't been indexed yet,
+it's lost permanently. Apply a consistency buffer: never advance the cursor
+closer than 10-15 seconds to "now". This is especially important for APIs
+with eventual consistency (Stripe, Salesforce, etc.).
 
-**Deletion handling (incremental only):**
-- If the API naturally includes delete signals in its change feed (e.g., Stripe
-  events with `*.deleted` types): emit `{ type: "delete", key }` markers — easy.
-- If deletes require a separate endpoint (audit log, archived filter): this adds
-  complexity (flip-flop pattern). Ask the user whether delete detection matters
-  for their use case — it depends on the domain. Suggest they can always add it later.
-- If the API has no delete signal at all, or the source data is rarely deleted
-  in practice: mention this to the user. They can skip delete handling for now
-  and add it later, or switch to replace mode if stale records become a problem.
+**Deletion handling:**
+There are three cases to consider:
+
+1. **API supports delta deletes** (e.g., Stripe events with `*.deleted` types,
+   APIs that return `deleted: true` in change feeds): Emit
+   `{ type: "delete", key }` in the delta sync. This is the cleanest approach.
+2. **Deletes are rare or irrelevant** for the use case: No action needed.
+   Stale records remain in Notion but don't cause problems.
+3. **Deletes matter but the API has no delete signal**: The backfill sync's
+   replace mode handles this automatically — its mark-and-sweep deletes any
+   records not seen during the full cycle. Trigger a backfill periodically
+   to clean up stale records.
+
+If the API has no change tracking at all, go back and recommend a simple
+replace sync instead.
 
 Present your state design to the user as a brief summary (e.g., "This API uses
-cursor-based pagination and has an `updated_at` field, so I'll use a bi-modal
-state with opaque cursor for backfill and timestamp keyset for delta"). Let
-them confirm or adjust before generating code.
+cursor-based pagination and has an `updated_at` field, so I'll use a
+backfill+delta pair with opaque cursor for backfill and timestamp keyset for
+delta"). Let them confirm or adjust before generating code.
 
 ### Step 5: Set Up Authentication
 
@@ -181,20 +216,31 @@ is fine — proceed to deploy and test via preview (Step 8).
 
 Write the sync into `src/index.ts`. Use the closest example from `.agents/skills/sync-guide/examples/` as a starting point:
 - `replace-simple.ts` — static data, no API
-- `replace-paginated.ts` — paginated replace mode
-- `incremental-basic.ts` — single cursor serves both phases
-- `incremental-bimodal.ts` — full bi-modal state machine
-- `incremental-events.ts` — event-anchor backfill + event-feed delta
+- `replace-paginated.ts` — paginated replace mode (also used for backfill syncs)
+- `incremental-basic.ts` — delta sync with opaque cursor
+- `incremental-bimodal.ts` — full backfill + delta pair example
+- `incremental-events.ts` — delta sync with event feed
 
 Include in the generated code:
 - Proper imports (`Worker`, `Builder`, `Schema`)
-- The state type (explicitly typed, discriminated union if bi-modal)
-- The schema definition with all requested properties
-- The `execute` function with phase handling
-- The backfill-to-delta transition (if bi-modal)
-- A consistency buffer (if the API is eventually consistent)
+- Database declaration via `worker.database()` with schema and `primaryKeyProperty`
+- A pacer for the upstream API via `worker.pacer()` — and `await pacer.wait()` before every API request
+- The state type(s) — simple types, one per sync (no discriminated unions needed)
+- The `worker.sync()` call(s) referencing the database handle
+- For backfill+delta: two syncs targeting the same database, backfill with `schedule: "manual"`, delta with a timed schedule
+- A consistency buffer for delta syncs (if the API is eventually consistent)
 - Inline comments explaining *why* each design choice was made
 - API calls using `fetch` with auth from `process.env`
+
+**Code generation checklist:**
+- [ ] Database declared with `worker.database()` and referenced by handle
+- [ ] Pacer declared with `worker.pacer()` for the upstream API
+- [ ] `await pacer.wait()` called before every `fetch` to the upstream API
+- [ ] State types are simple (no bi-modal discriminated unions)
+- [ ] Backfill sync uses `mode: "replace"` and `schedule: "manual"` (if applicable)
+- [ ] Delta sync uses `mode: "incremental"` with a timed schedule (if applicable)
+- [ ] Consistency buffer applied to delta cursor advancement (if applicable)
+- [ ] Deletion handling matches one of the three cases from Step 4
 
 ### Step 7: Test Locally
 
@@ -215,7 +261,12 @@ Test the sync before deploying. This catches bugs early without a deploy cycle.
 4. If there are errors (auth failures, wrong field mappings, crashes):
    fix the code and re-run — no deploy needed, iteration is fast.
 
-5. Write a test file (`test.ts`) that exercises the sync. Import the worker
+5. For backfill+delta pairs, test each sync independently:
+   - Test the backfill sync: `ntn workers exec <backfillKey> --local`
+   - Test the delta sync: `ntn workers exec <deltaKey> --local`
+   - Verify they both return well-formed data with the correct properties.
+
+6. Write a test file (`test.ts`) that exercises the sync. Import the worker
    directly and call its `.run()` method.
 
    If the user has API credentials in `.env`, write a test that hits the real
@@ -254,8 +305,8 @@ Test the sync before deploying. This catches bugs early without a deploy cycle.
    ```
 
    Run with `npx tsx test.ts`. Adapt to the specific sync: use the actual
-   capability key, add assertions for specific field values, verify phase
-   transitions for bi-modal syncs, etc.
+   capability key, add assertions for specific field values, verify both
+   backfill and delta syncs for backfill+delta pairs, etc.
 
 **For syncs using OAuth (Pattern B):**
 Local execution won't work because `.accessToken()` requires a deployed worker
@@ -287,6 +338,10 @@ Then, if the sync uses OAuth, complete the OAuth flow before previewing.
    - If `hasMore: true`, continue: `ntn workers sync trigger <syncKey> --preview --context '<nextState>'`
 5. If the preview shows issues, fix the code and redeploy (go back to step 1)
 
+For backfill+delta pairs, preview both syncs:
+- `ntn workers sync trigger <backfillKey> --preview`
+- `ntn workers sync trigger <deltaKey> --preview`
+
 ### Step 9: Go Live
 
 When the preview looks good:
@@ -296,7 +351,14 @@ When the preview looks good:
 3. `ntn workers runs list` then `ntn workers runs logs <runId>` — check for errors
 4. Run `ntn workers sync status` again to confirm progress (record count increasing, no errors)
 
+For backfill+delta pairs, trigger the backfill first to load all data, then
+let the delta sync's schedule handle ongoing changes:
+1. `ntn workers sync trigger <backfillKey>` — start the full dataset load
+2. Monitor with `ntn workers sync status` until the backfill completes
+3. The delta sync will run automatically on its configured schedule
+
 Tell the user: the first sync run is the backfill, which may take a while
 depending on dataset size. They should periodically run `ntn workers sync status`
-to monitor progress until the initial backfill completes. After that, the sync
-runs automatically on its configured schedule.
+to monitor progress until the initial backfill completes. After that, the delta
+sync runs automatically on its configured schedule. To re-backfill later:
+`ntn workers sync state reset <backfillKey> && ntn workers sync trigger <backfillKey>`

@@ -1,23 +1,26 @@
 /**
- * Incremental mode — bi-modal state machine with backfill-to-delta transition.
+ * Two-sync pattern — backfill + delta writing to the same database.
  *
- * The full pattern for APIs where backfill and delta use different strategies.
- * Backfill paginates the full dataset using one cursor type; delta tracks
- * changes using a different cursor type (typically a timestamp).
+ * Instead of a single sync with a bi-modal state machine (phase: "backfill" | "delta"),
+ * this uses two separate syncs targeting the same database:
+ *
+ * - **Backfill sync** (replace mode, manual schedule): Paginates the full dataset
+ *   using keyset pagination on (created_at, id). Triggered on demand via CLI.
+ * - **Delta sync** (incremental mode, 5m schedule): Fetches only recently modified
+ *   records using keyset pagination on (updated_at, id) with a 15s consistency buffer.
+ *
+ * Advantages over the single-sync bi-modal approach:
+ * - No phase discrimination in state — each sync has simple, focused state
+ * - No backfill-to-delta transition logic
+ * - Backfill and delta run independently — re-backfill anytime without disrupting delta
+ * - Easier to reason about and debug
  *
  * This is the Salesforce/HubSpot pattern:
  * - Backfill: keyset pagination on (created_at, id)
  * - Delta: keyset pagination on (updated_at, id) with consistency buffer
- * - Transition: seed delta cursor to backfillStartedAt - 5 minutes
  *
- * Key points:
- * - State is a discriminated union with a `phase` field
- * - backfillStartedAt is captured on the FIRST execute call and carried through
- * - The delta cursor is seeded from backfillStartedAt, NOT from the last backfill record
- * - Consistency buffer (15s) prevents the cursor from advancing past records
- *   that the API hasn't indexed yet — since the cursor never resets, skipping
- *   a record means losing it permanently
- * - Keyset (timestamp + id) prevents skipping records that share a timestamp
+ * To trigger a full re-backfill:
+ *   ntn workers sync state reset contactsBackfill && ntn workers sync trigger contactsBackfill
  */
 
 import { Worker } from "@notionhq/workers";
@@ -27,108 +30,140 @@ import * as Schema from "@notionhq/workers/schema";
 const worker = new Worker();
 export default worker;
 
-// Discriminated union: the state shape depends on which phase we're in
-type SyncState =
-	| {
-			phase: "backfill";
-			cursorTimestamp: string | null;
-			cursorId: string | null;
-			backfillStartedAt: string;
-	  }
-	| {
-			phase: "delta";
-			cursorTimestamp: string;
-			cursorId: string;
-	  };
-
-const BATCH_SIZE = 100;
-const CONSISTENCY_BUFFER_MS = 15_000; // 15 seconds
-
-worker.sync("contactsSync", {
-	mode: "incremental",
+// One database shared by both syncs
+const contacts = worker.database("contacts", {
+	type: "managed",
+	initialTitle: "Contacts",
 	primaryKeyProperty: "Contact ID",
 	schema: {
-		defaultName: "Contacts",
 		properties: {
 			Name: Schema.title(),
 			"Contact ID": Schema.richText(),
 		},
 	},
-	execute: async (state: SyncState | undefined) => {
-		const phase = state?.phase ?? "backfill";
+});
 
-		if (phase === "backfill") {
-			// Capture when the backfill started — used to seed the delta cursor later.
-			// This is set once on the first execute call and carried through all backfill pages.
-			const backfillStartedAt =
-				state?.phase === "backfill"
-					? state.backfillStartedAt
-					: new Date().toISOString();
+// One pacer shared by both syncs — budget is apportioned evenly
+const apiPacer = worker.pacer("crm", {
+	allowedRequests: 10,
+	intervalMs: 1000,
+});
 
-			// Keyset pagination: WHERE created_at > X OR (created_at = X AND id > Y)
-			const params = new URLSearchParams({
-				limit: String(BATCH_SIZE),
-				order_by: "created_at,id",
-			});
-			if (state?.cursorTimestamp) {
-				params.set("created_after", state.cursorTimestamp);
-				params.set("created_after_id", state.cursorId ?? "");
-			}
+const BATCH_SIZE = 100;
+const CONSISTENCY_BUFFER_MS = 15_000; // 15 seconds
 
-			const response = await fetch(
-				`https://api.example.com/contacts?${params}`,
-				{ headers: { Authorization: `Bearer ${process.env.API_TOKEN}` } },
-			);
-			const data = await response.json();
-			const records: Array<{
-				id: string;
-				name: string;
-				created_at: string;
-			}> = data.contacts;
-			const done = records.length < BATCH_SIZE;
+// ---------------------------------------------------------------------------
+// Shared helper — maps a contact record to a sync upsert change
+// ---------------------------------------------------------------------------
+function toUpsert(record: { id: string; name: string }) {
+	return {
+		type: "upsert" as const,
+		key: record.id,
+		properties: {
+			Name: Builder.title(record.name),
+			"Contact ID": Builder.richText(record.id),
+		},
+	};
+}
 
-			if (done) {
-				// Backfill complete — transition to delta.
-				// Seed delta cursor to backfillStartedAt - 5 minutes to ensure overlap.
-				// This covers records that were modified during the backfill window.
-				const overlapTs = new Date(
-					new Date(backfillStartedAt).getTime() - 5 * 60 * 1000,
-				).toISOString();
+// ---------------------------------------------------------------------------
+// Backfill sync: replace mode, manual schedule
+// ---------------------------------------------------------------------------
+// Paginates the full dataset using keyset pagination on (created_at, id).
+// Replace mode means the runtime will delete any records not seen during the
+// full cycle, ensuring the database is a faithful mirror of the source.
 
-				return {
-					changes: records.map(toUpsert),
-					hasMore: false,
-					nextState: {
-						phase: "delta" as const,
-						cursorTimestamp: overlapTs,
-						cursorId: "",
-					},
-				};
-			}
+type BackfillState = {
+	cursorTimestamp: string | null;
+	cursorId: string | null;
+};
 
-			const last = records[records.length - 1];
+worker.sync("contactsBackfill", {
+	database: contacts,
+	mode: "replace",
+	schedule: "manual",
+	execute: async (state: BackfillState | undefined) => {
+		// Keyset pagination: WHERE created_at > X OR (created_at = X AND id > Y)
+		const params = new URLSearchParams({
+			limit: String(BATCH_SIZE),
+			order_by: "created_at,id",
+		});
+		if (state?.cursorTimestamp) {
+			params.set("created_after", state.cursorTimestamp);
+			params.set("created_after_id", state.cursorId ?? "");
+		}
+
+		await apiPacer.wait();
+		const response = await fetch(
+			`https://api.example.com/contacts?${params}`,
+			{ headers: { Authorization: `Bearer ${process.env.API_TOKEN}` } },
+		);
+		const data = await response.json();
+		const records: Array<{
+			id: string;
+			name: string;
+			created_at: string;
+		}> = data.contacts;
+		const done = records.length < BATCH_SIZE;
+
+		if (done) {
 			return {
 				changes: records.map(toUpsert),
-				hasMore: true,
-				nextState: {
-					phase: "backfill" as const,
-					cursorTimestamp: last.created_at,
-					cursorId: last.id,
-					backfillStartedAt,
-				},
+				hasMore: false,
 			};
 		}
 
-		// Delta phase: fetch only records modified since the cursor.
-		// Same keyset pattern but on updated_at instead of created_at.
-		const deltaState = state as Extract<SyncState, { phase: "delta" }>;
+		const last = records[records.length - 1];
+		return {
+			changes: records.map(toUpsert),
+			hasMore: true,
+			nextState: {
+				cursorTimestamp: last.created_at,
+				cursorId: last.id,
+			},
+		};
+	},
+});
+
+// ---------------------------------------------------------------------------
+// Delta sync: incremental mode, every 5 minutes
+// ---------------------------------------------------------------------------
+// Fetches only records modified since the cursor. Uses keyset pagination on
+// (updated_at, id) with a 15s consistency buffer to avoid advancing past
+// records that the API hasn't indexed yet.
+
+type DeltaState = {
+	cursorTimestamp: string;
+	cursorId: string;
+};
+
+worker.sync("contactsDelta", {
+	database: contacts,
+	mode: "incremental",
+	schedule: "5m",
+	execute: async (state: DeltaState | undefined) => {
+		// On first run, start from "now" minus the consistency buffer.
+		// This means the first delta cycle won't fetch any historical data —
+		// that's the backfill sync's job.
+		if (!state) {
+			const startTs = new Date(
+				Date.now() - CONSISTENCY_BUFFER_MS,
+			).toISOString();
+			return {
+				changes: [],
+				hasMore: false,
+				nextState: { cursorTimestamp: startTs, cursorId: "" },
+			};
+		}
+
 		const params = new URLSearchParams({
 			limit: String(BATCH_SIZE),
 			order_by: "updated_at,id",
-			updated_after: deltaState.cursorTimestamp,
-			updated_after_id: deltaState.cursorId,
+			updated_after: state.cursorTimestamp,
+			updated_after_id: state.cursorId,
 		});
 
+		await apiPacer.wait();
 		const response = await fetch(
 			`https://api.example.com/contacts?${params}`,
 			{ headers: { Authorization: `Bearer ${process.env.API_TOKEN}` } },
@@ -156,10 +191,10 @@ worker.sync("contactsSync", {
 			nextCursorTs =
 				last && last.updated_at < bufferTs
 					? last.updated_at
-					: (deltaState.cursorTimestamp < bufferTs
-							? bufferTs
-							: deltaState.cursorTimestamp);
-			nextCursorId = last?.id ?? deltaState.cursorId;
+					: state.cursorTimestamp < bufferTs
+						? bufferTs
+						: state.cursorTimestamp;
+			nextCursorId = last?.id ?? state.cursorId;
 		} else {
 			// More pages — advance cursor to last record on this page
 			nextCursorTs = last.updated_at;
@@ -170,21 +205,9 @@ worker.sync("contactsSync", {
 			changes: records.map(toUpsert),
 			hasMore: !done,
 			nextState: {
-				phase: "delta" as const,
 				cursorTimestamp: nextCursorTs,
 				cursorId: nextCursorId,
 			},
 		};
 	},
 });
-
-function toUpsert(record: { id: string; name: string }) {
-	return {
-		type: "upsert" as const,
-		key: record.id,
-		properties: {
-			Name: Builder.title(record.name),
-			"Contact ID": Builder.richText(record.id),
-		},
-	};
-}

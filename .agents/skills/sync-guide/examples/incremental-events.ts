@@ -1,21 +1,23 @@
 /**
- * Incremental mode — event-anchor backfill + event-feed delta (Stripe pattern).
+ * Delta sync — event-feed pattern (Stripe-style).
  *
- * For APIs that have both a list endpoint (for backfill) and an events/changelog
- * endpoint (for delta). The key insight: before fetching any backfill data,
- * capture the latest event ID as an "anchor." When the backfill completes,
- * start reading events from that anchor.
+ * This is the delta half of a backfill+delta pair. It reads from an events/
+ * changelog endpoint to detect changes incrementally. A separate replace-mode
+ * backfill sync (not shown here) handles the full dataset load.
  *
- * This ensures no events are missed between "backfill started" and "backfill ended,"
- * even if the backfill takes hours.
+ * The event feed provides a reliable change stream: each event has a unique ID
+ * that serves as a cursor. Events can produce both upserts and deletes.
  *
  * Key points:
- * - Event anchor is captured on the FIRST execute call, before any data is fetched
- * - Backfill uses opaque cursor pagination (starting_after)
- * - Delta reads from an events endpoint using event IDs as cursors
+ * - State is just { eventCursor: string } — no phase discrimination
+ * - First run: fetch the latest event ID as the starting cursor
  * - Consistency buffer: skip events younger than 10 seconds (they may not be
  *   fully consistent yet, and since the cursor never resets, skipping = permanent loss)
- * - Events can produce both upserts and deletes
+ * - Events can map to both upserts and deletes
+ *
+ * For the backfill half, use a replace-mode sync targeting the same database —
+ * see replace-paginated.ts for the pattern. Trigger it via CLI:
+ *   ntn workers sync state reset customersBackfill && ntn workers sync trigger customersBackfill
  */
 
 import { Worker } from "@notionhq/workers";
@@ -25,78 +27,54 @@ import * as Schema from "@notionhq/workers/schema";
 const worker = new Worker();
 export default worker;
 
-type SyncState =
-	| {
-			phase: "backfill";
-			cursor: string | null;
-			eventAnchor: string; // captured before backfill starts
-	  }
-	| {
-			phase: "delta";
-			eventCursor: string; // ID of last processed event
-	  };
-
-const CONSISTENCY_BUFFER_SECONDS = 10;
-
-worker.sync("customersSync", {
-	mode: "incremental",
+// Database shared between backfill (replace) and this delta (incremental) sync
+const customers = worker.database("customers", {
+	type: "managed",
+	initialTitle: "Customers",
 	primaryKeyProperty: "Customer ID",
 	schema: {
-		defaultName: "Customers",
 		properties: {
 			Name: Schema.title(),
 			"Customer ID": Schema.richText(),
 		},
 	},
-	execute: async (state: SyncState | undefined) => {
-		if (!state || state.phase === "backfill") {
-			// Step 1 (first call only): capture the latest event ID as anchor.
-			// This marks the position in the event stream at the moment backfill begins.
-			// When the backfill completes, delta will start reading from this anchor,
-			// ensuring no events are missed during the backfill window.
-			let eventAnchor: string;
-			if (!state) {
-				const anchorResponse = await apiCall("/v1/events?limit=1");
-				eventAnchor = anchorResponse.data[0]?.id ?? "";
-			} else {
-				eventAnchor = state.eventAnchor;
-			}
+});
 
-			// Step 2: fetch one page of the full dataset
-			const params: Record<string, string> = { limit: "100" };
-			if (state?.cursor) {
-				params.starting_after = state.cursor;
-			}
-			const response = await apiCall(
-				`/v1/customers?${new URLSearchParams(params)}`,
-			);
-			const customers: Array<{ id: string; name: string }> = response.data;
-			const hasMore = response.has_more;
+// Rate-limit API calls — shared across all syncs hitting this API
+const apiPacer = worker.pacer("stripe", {
+	allowedRequests: 25,
+	intervalMs: 1000,
+});
 
-			if (!hasMore) {
-				// Backfill complete — transition to delta, starting from the anchor
-				return {
-					changes: customers.map(toUpsert),
-					hasMore: false,
-					nextState: { phase: "delta" as const, eventCursor: eventAnchor },
-				};
-			}
+const CONSISTENCY_BUFFER_SECONDS = 10;
 
-			const lastId = customers[customers.length - 1].id;
+type DeltaState = { eventCursor: string };
+
+// Delta sync: reads the event feed for incremental changes
+worker.sync("customersDelta", {
+	database: customers,
+	mode: "incremental",
+	schedule: "5m",
+	execute: async (state: DeltaState | undefined) => {
+		// First run: capture the latest event ID as the starting cursor.
+		// We don't process any events on the first run — the backfill sync
+		// handles the full dataset. This just establishes "start here" for
+		// future delta cycles.
+		if (!state) {
+			await apiPacer.wait();
+			const anchorResponse = await apiCall("/v1/events?limit=1");
+			const eventCursor = anchorResponse.data[0]?.id ?? "";
 			return {
-				changes: customers.map(toUpsert),
-				hasMore: true,
-				nextState: {
-					phase: "backfill" as const,
-					cursor: lastId,
-					eventAnchor,
-				},
+				changes: [],
+				hasMore: false,
+				nextState: { eventCursor },
 			};
 		}
 
-		// Delta phase: read events from the changelog endpoint.
+		// Read events from the changelog endpoint.
 		// Events are returned in reverse-chronological order, so we read backwards
 		// from the latest event to our cursor position.
+		await apiPacer.wait();
 		const response = await apiCall(
 			`/v1/events?limit=100&ending_before=${state.eventCursor}`,
 		);
@@ -130,7 +108,7 @@ worker.sync("customersSync", {
 		return {
 			changes,
 			hasMore: response.has_more && safeEvents.length > 0,
-			nextState: { phase: "delta" as const, eventCursor: nextCursor },
+			nextState: { eventCursor: nextCursor },
 		};
 	},
 });

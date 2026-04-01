@@ -8,6 +8,7 @@
  * - mode: "replace" means the runtime deletes any records not returned each cycle
  * - No state needed — there's no pagination and no cursor
  * - hasMore: false on every call — single-page cycle
+ * - Database is declared separately via worker.database() and referenced by handle
  */
 
 import { Worker } from "@notionhq/workers";
@@ -17,16 +18,21 @@ import * as Schema from "@notionhq/workers/schema";
 const worker = new Worker();
 export default worker;
 
-worker.sync("teamSync", {
-	mode: "replace",
+const teamDb = worker.database("teamDb", {
+	type: "managed",
+	initialTitle: "Team Members",
 	primaryKeyProperty: "Member ID",
 	schema: {
-		defaultName: "Team Members",
 		properties: {
 			Name: Schema.title(),
 			"Member ID": Schema.richText(),
 		},
 	},
+});
+
+worker.sync("teamSync", {
+	database: teamDb,
+	mode: "replace",
 	execute: async () => {
 		// In a real sync, you'd fetch this from an API
 		const members = [
