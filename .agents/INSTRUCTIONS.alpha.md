@@ -3,6 +3,7 @@
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
 - `.examples/` has focused samples (sync, tool, automation, OAuth, webhook).
+- Shared agent skills live in `.agents/skills/`. `.claude/skills` is kept as a compatibility symlink for Claude-specific discovery.
 - Generated: `dist/` build output, `workers.json` CLI config.
 
 ## Worker & Capability API (SDK)
@@ -56,6 +57,7 @@ worker.webhook("onGithubPush", {
 
 - For user-managed OAuth, supply `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
 - After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
+- **OAuth setup order:** Deploy → `ntn workers env push` → set redirect URL → `ntn workers oauth start`. Secrets must be pushed before starting the OAuth flow because the deployed worker needs the client secret to exchange the authorization code for tokens.
 
 ### Sync
 #### Strategy and Pagination
@@ -63,8 +65,8 @@ worker.webhook("onGithubPush", {
 Syncs run in a "sync cycle": a back-to-back chain of `execute` calls that starts at a scheduled trigger and ends when an execution returns `hasMore: false`. By default, syncs run every 30 minutes. Set `schedule` to an interval like `"15m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`), or `"continuous"` to run as fast as possible.
 
 - Always use pagination, when available. Returning too many changes in one execution will fail. Start with batch sizes of ~100 changes.
-- `mode=replace` is simpler, and fine for smaller syncs (<10k)
-- Use `mode=incremental` when the sync could return a lot of data (>10k), eg for SaaS tools like Salesforce or Stripe
+- `mode=replace` is simpler — use it when the API has no change tracking (no `updated_at` filter, no event feed)
+- Use `mode=incremental` when the API supports change tracking (e.g. `updated_since`, event streams), which enterprise APIs like Salesforce, Stripe, and Linear typically do
 - When using `mode=incremental`, emit delete markers as needed if easy to do (below)
 
 **Sync strategy (`mode`):**
@@ -202,13 +204,61 @@ https://www.notion.so/webhooks/worker/{spaceId}/{workerId}/{uniqueWebhookId}/{we
 
 This full URL can be retrieved using the `notion workers webhooks ls` command.
 
+### Sync Management (CLI)
+
+**Monitor sync status:**
+```shell
+ntn workers sync status              # live-updating watch mode (polls every 5s)
+ntn workers sync status <key>        # filter to a specific sync capability
+ntn workers sync status --no-watch   # print once and exit
+ntn workers sync status --interval 10 # custom poll interval in seconds
+```
+
+Status labels:
+- **HEALTHY** — last run succeeded
+- **INITIALIZING** — deployed but hasn't succeeded yet
+- **WARNING** — 1–2 consecutive failures
+- **ERROR** — 3+ consecutive failures
+- **DISABLED** — capability is disabled
+
+**Preview a sync (inspect output without writing):**
+```shell
+ntn workers sync trigger <key> --preview                   # run execute, show objects, don't write to the database
+ntn workers sync trigger <key> --preview --context '{"page":2}'  # resume from a previous preview's nextContext
+```
+Preview calls your sync's `execute` function and shows the objects it would produce, but **does not write anything to the Notion database**. Use it to verify your sync logic and inspect the data before committing to a real run. When piped, outputs raw JSON.
+
+**Trigger a sync (write immediately, bypass schedule):**
+```shell
+ntn workers sync trigger <key>
+```
+Trigger starts a **real** sync cycle that writes to the database, bypassing the normal schedule. Use it to push changes immediately rather than waiting for the next scheduled run.
+
+**Reset sync state (restart from scratch):**
+```shell
+ntn workers sync state reset <key>
+```
+Clears the cursor and stats so the next run starts from the beginning.
+
+**Enable / disable a sync:**
+```shell
+ntn workers capabilities list            # show all capabilities
+ntn workers capabilities disable <key>   # pause a sync
+ntn workers capabilities enable <key>    # resume a sync
+```
+
+> **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.
+
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
 - `npm run build`: compile TypeScript to `dist/`.
 - `npm run check`: type-check only (no emit).
 - `ntn login`: connect to a Notion workspace.
-- `ntn workers deploy`: build and publish capabilities.
+- `ntn workers deploy`: build and publish capabilities. Does not reset sync state.
 - `ntn workers exec <capability>`: run a sync or tool.
+- `ntn workers sync status`: monitor sync health (live-updating).
+- `ntn workers sync trigger <key> --preview`: preview sync output without writing to the database.
+- `ntn workers sync trigger <key>`: trigger a real sync immediately (writes to the database).
 
 ## Debugging & Monitoring Runs
 Use `ntn workers runs` to inspect run history and logs.
@@ -234,6 +284,34 @@ ntn workers runs list --plain | grep tasksSync | head -n1 | cut -f1 | xargs -I{}
 ```
 
 The `--plain` flag outputs tab-separated values without formatting, making it easy to pipe to other commands.
+
+### Debugging Syncs
+
+**Check sync health:**
+```shell
+ntn workers sync status
+```
+Look at failure counts, error messages, and last succeeded times.
+
+**Sync not running?** Check if the capability is disabled:
+```shell
+ntn workers capabilities list
+```
+
+**Preview what a sync would produce (without writing):**
+```shell
+ntn workers sync trigger <key> --preview
+```
+
+**Retry a failed sync (writes to the database):**
+```shell
+ntn workers sync trigger <key>
+```
+
+**Sync in a bad state?** Reset the cursor and restart:
+```shell
+ntn workers sync state reset <key>
+```
 
 ## Coding Style & Naming Conventions
 - TypeScript with `strict` enabled; keep types explicit when shaping I/O.

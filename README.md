@@ -1,7 +1,9 @@
 # Notion Workers [alpha]
 
-A worker is a small Node/TypeScript program hosted by Notion that you can use
-to build tool calls for Notion custom agents.
+A worker is a small Node/TypeScript program hosted by Notion. Workers have two capability types:
+
+- **Tools** — callable functions for Notion custom agents
+- **Syncs** — sync external data sources into Notion
 
 > [!WARNING]
 >
@@ -11,23 +13,19 @@ to build tool calls for Notion custom agents.
 > changes to Notion Workers CLI, templates, and more. We aim to minimize
 > friction, but expect things to go wrong.
 
-## Quick Start
+## Quick start
 
-Install the `ntn` CLI:
+Install the `ntn` CLI and scaffold a new worker:
 
 ```shell
 npm i -g ntn
-```
-
-Scaffold a new worker:
-
-```shell
 ntn workers new
-# Follow the prompts to scaffold your worker
 cd my-worker
 ```
 
-You'll find a `Hello, world` example in `src/index.ts`:
+## Tools quickstart
+
+A tool gives your Notion agent a new ability. Here's a simple greeting tool in `src/index.ts`:
 
 ```ts
 import { Worker } from "@notionhq/workers";
@@ -46,47 +44,321 @@ worker.tool("sayHello", {
 });
 ```
 
-Deploy your worker:
+Deploy and add the tool to your agent:
 
 ```shell
 ntn workers deploy
 ```
 
-In Notion, add the tool call to your agent:
-
 ![Adding a custom tool to your Notion agent](docs/custom-tool.png)
 
-## Authentication & Secrets
+## Syncs quickstart
 
-If your worker needs to access third-party systems, use secrets for API keys and OAuth for user authorization flows.
+A sync pulls data from an external source into a Notion database. Here's a simple sync in `src/index.ts`:
+
+```ts
+import { Worker } from "@notionhq/workers";
+import * as Builder from "@notionhq/workers/builder";
+import * as Schema from "@notionhq/workers/schema";
+
+const worker = new Worker();
+export default worker;
+
+const issues = worker.database("issues", {
+	type: "managed",
+	initialTitle: "Issues",
+	primaryKeyProperty: "Issue ID",
+	schema: {
+		properties: {
+			Title: Schema.title(),
+			"Issue ID": Schema.richText(),
+		},
+	},
+});
+
+const issueTracker = worker.pacer("issueTracker", { allowedRequests: 10, intervalMs: 1000 });
+
+worker.sync("issuesSync", {
+	database: issues,
+	execute: async () => {
+		await issueTracker.wait();
+		const items = await fetchIssues(); // your data source
+		return {
+			changes: items.map((issue) => ({
+				type: "upsert" as const,
+				key: issue.id,
+				properties: {
+					Title: Builder.title(issue.title),
+					"Issue ID": Builder.richText(issue.id),
+				},
+			})),
+			hasMore: false,
+		};
+	},
+});
+```
+
+Deploy and your sync runs automatically on a schedule (default: every 30 minutes):
+
+```shell
+ntn workers deploy
+ntn workers sync status
+```
+
+## Tools reference
+
+### Schema builder
+
+Use the schema builder (`j`) to define tool inputs. It auto-sets `required` and `additionalProperties`, and provides TypeScript type inference:
+
+```ts
+import { j } from "@notionhq/workers/schema-builder";
+
+schema: j.object({
+	query: j.string().describe("Search query"),
+	limit: j.number().describe("Max results").nullable(),
+})
+```
+
+Use `.nullable()` to mark a field as optional. Use `.describe()` to tell the agent what the field is for.
+
+### Output schema
+
+Optionally define the shape of what your tool returns:
+
+```ts
+worker.tool("search", {
+	title: "Search",
+	description: "Search for items",
+	schema: j.object({
+		query: j.string().describe("Search query"),
+	}),
+	outputSchema: j.object({
+		results: j.array(j.string()),
+	}),
+	execute: async ({ query }) => {
+		return { results: [] };
+	},
+});
+```
+
+### Execute function
+
+The `execute` function receives the validated input and a context object:
+
+```ts
+execute: async (input, context) => {
+	// context.notion — authenticated Notion SDK client
+	const { query, limit = 10 } = input;
+	return { results: [] };
+}
+```
+
+## Syncs reference
+
+### Databases and schema
+
+Declare databases with `worker.database()` and define schemas with `Schema` helpers. Build property values with `Builder`:
+
+```ts
+import * as Schema from "@notionhq/workers/schema";
+import * as Builder from "@notionhq/workers/builder";
+
+const records = worker.database("records", {
+	type: "managed",
+	initialTitle: "My Data",
+	primaryKeyProperty: "ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			ID: Schema.richText(),
+		},
+	},
+});
+
+// In execute, return changes with matching property values:
+properties: {
+	Name: Builder.title("Item name"),
+	ID: Builder.richText("item-1"),
+}
+```
+
+`primaryKeyProperty` specifies which property to use as the unique key for each record.
+
+### Sync modes
+
+**Replace** (`mode: "replace"`) — each sync cycle returns the full dataset. After the final `hasMore: false`, any records not seen are deleted:
+
+```ts
+worker.sync("teamsSync", {
+	database: teams,
+	mode: "replace",
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await myApi.wait();
+		const { items, hasMore } = await fetchPage(page, 100);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
+	},
+});
+```
+
+**Incremental** (`mode: "incremental"`) — each cycle returns only what changed since the last run. Records not mentioned are left unchanged. Deletions must be explicit:
+
+```ts
+worker.sync("eventsSync", {
+	database: events,
+	mode: "incremental",
+	execute: async (state) => {
+		await myApi.wait();
+		const { upserts, deletes, nextCursor } = await fetchChanges(state?.cursor);
+		return {
+			changes: [
+				...upserts.map((item) => ({
+					type: "upsert" as const,
+					key: item.id,
+					properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
+				})),
+				...deletes.map((id) => ({ type: "delete" as const, key: id })),
+			],
+			hasMore: Boolean(nextCursor),
+			nextState: nextCursor ? { cursor: nextCursor } : undefined,
+		};
+	},
+});
+```
+
+Use `replace` for smaller datasets (<1k records). Use `incremental` for larger datasets or when the API supports change tracking.
+
+### Pagination
+
+Syncs run as a chain of `execute` calls within a sync cycle:
+
+1. Return changes with `hasMore: true` and a `nextState` value
+2. The runtime calls `execute` again with that state
+3. Continue until you return `hasMore: false`
+
+`nextState` can be any serializable value — a cursor string, page number, timestamp, or object. Start with batch sizes of ~100 changes.
+
+### Schedule
+
+By default syncs run every 30 minutes. Set `schedule` to an interval like `"15m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`), `"continuous"`, or `"manual"`:
+
+```ts
+worker.sync("fastSync", {
+	database: myDb,
+	schedule: "5m",
+	// ...
+});
+```
+
+### Relations
+
+Two databases can relate to each other using `Schema.relation()` and `Builder.relation()`:
+
+```ts
+const projects = worker.database("projects", {
+	type: "managed",
+	initialTitle: "Projects",
+	primaryKeyProperty: "Project ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			"Project ID": Schema.richText(),
+		},
+	},
+});
+
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "Task ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			"Task ID": Schema.richText(),
+			Project: Schema.relation("projectsSync", {
+				twoWay: true,
+				relatedPropertyName: "Tasks",
+			}),
+		},
+	},
+});
+
+worker.sync("projectsSync", {
+	database: projects,
+	execute: async () => { /* ... */ },
+});
+
+worker.sync("tasksSync", {
+	database: tasks,
+	execute: async () => {
+		const items = await fetchTasks();
+		return {
+			changes: items.map((task) => ({
+				type: "upsert" as const,
+				key: task.id,
+				properties: {
+					Name: Builder.title(task.name),
+					"Task ID": Builder.richText(task.id),
+					Project: [Builder.relation(task.projectId)],
+				},
+			})),
+			hasMore: false,
+		};
+	},
+});
+```
+
+### Sync CLI commands
+
+```shell
+ntn workers sync status              # live-updating status
+ntn workers sync trigger <key> --preview  # preview output without writing to the database
+ntn workers sync trigger <key>           # trigger a real sync immediately
+ntn workers sync state reset <key>   # restart from scratch
+ntn workers capabilities disable <key>  # pause a sync
+ntn workers capabilities enable <key>   # resume a sync
+```
+
+> [!NOTE]
+> Deploying does **not** reset sync state — syncs resume from their last cursor position. Use `ntn workers sync state reset <key>` to restart from scratch.
+
+## Authentication & secrets
 
 ### Secrets
 
-Store API keys and credentials with the `secrets` command:
+Store API keys and credentials:
 
 ```shell
-ntn workers env set TWILIO_AUTH_TOKEN=your-token-here
-ntn workers env set OPENWEATHER_API_KEY=abc123
+ntn workers env set API_KEY=your-secret
 ```
 
-For local development, pull the secrets to a `.env` file:
+For local development, pull secrets to a `.env` file:
 
 ```shell
 ntn workers env pull
 ```
 
-Access them in your code via `process.env`:
+Access them via `process.env`:
 
 ```ts
-const apiKey = process.env.OPENWEATHER_API_KEY;
+const apiKey = process.env.API_KEY;
 ```
 
 ### OAuth
 
-For services requiring user authorization (GitHub, Google, etc.), set up OAuth:
+For services requiring user authorization (GitHub, Google, etc.):
 
 ```ts
-worker.oauth("githubAuth", {
+const githubAuth = worker.oauth("githubAuth", {
 	name: "github-oauth",
 	authorizationEndpoint: "https://github.com/login/oauth/authorize",
 	tokenEndpoint: "https://github.com/login/oauth/access_token",
@@ -96,15 +368,10 @@ worker.oauth("githubAuth", {
 });
 ```
 
-After deploying, get your redirect URL and add it to your OAuth provider's app settings:
+After deploying, configure your OAuth provider's redirect URL:
 
 ```shell
 ntn workers oauth show-redirect-url
-```
-
-Then start the OAuth flow:
-
-```shell
 ntn workers oauth start githubAuth
 ```
 
@@ -128,7 +395,51 @@ worker.tool("getGitHubRepos", {
 ## What you can build
 
 <details open>
-<summary><strong>Give Agents a phone with Twilio</strong></summary>
+<summary><strong>Sync external data into Notion</strong></summary>
+
+```ts
+const customers = worker.database("customers", {
+	type: "managed",
+	initialTitle: "Customers",
+	primaryKeyProperty: "Customer ID",
+	schema: {
+		properties: {
+			Name: Schema.title(),
+			"Customer ID": Schema.richText(),
+			Email: Schema.richText(),
+		},
+	},
+});
+
+const crm = worker.pacer("crm", { allowedRequests: 10, intervalMs: 1000 });
+
+worker.sync("customersSync", {
+	database: customers,
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await crm.wait();
+		const { customers: items, hasMore } = await fetchCustomers(page);
+		return {
+			changes: items.map((c) => ({
+				type: "upsert" as const,
+				key: c.id,
+				properties: {
+					Name: Builder.title(c.name),
+					"Customer ID": Builder.richText(c.id),
+					Email: Builder.richText(c.email),
+				},
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
+	},
+});
+```
+
+</details>
+
+<details>
+<summary><strong>Give agents a phone with Twilio</strong></summary>
 
 ```ts
 worker.tool("sendSMS", {
@@ -191,7 +502,7 @@ worker.tool("postToDiscord", {
 </details>
 
 <details>
-<summary><strong>Turn a Notion Page into a Podcast with ElevenLabs</strong></summary>
+<summary><strong>Turn a Notion page into a podcast with ElevenLabs</strong></summary>
 
 ```ts
 worker.tool("createPodcast", {
@@ -254,7 +565,26 @@ worker.tool("getWeather", {
 ntn workers deploy
 
 # Test a tool locally
-ntn workers exec <toolName>
+ntn workers exec <toolName> --local -d '{"key": "value"}'
+
+# Monitor sync status (live-updating)
+ntn workers sync status
+
+# Preview sync output without writing to the database
+ntn workers sync trigger <syncKey> --preview
+
+# Trigger a real sync immediately (writes to the database, bypasses schedule)
+ntn workers sync trigger <syncKey>
+
+# Reset sync state (restart from scratch)
+ntn workers sync state reset <syncKey>
+
+# List all capabilities
+ntn workers capabilities list
+
+# Pause / resume a sync
+ntn workers capabilities disable <syncKey>
+ntn workers capabilities enable <syncKey>
 
 # Manage authentication
 ntn login
@@ -276,7 +606,7 @@ ntn workers oauth show-redirect-url
 ntn --help
 ```
 
-## Local Development
+## Local development
 
 ```shell
 npm run check # type-check
@@ -291,4 +621,4 @@ ntn workers env pull
 
 ## Have a question?
 
-Join the [Notion Dev Slack](https://join.slack.com/t/notiondevs/shared_invite/zt-3r1aq1t1s-hM2har7iqfOfHJRrH9PHww)!
+Join the [Notion Dev Slack](https://join.slack.com/t/notiondevs/shared_invite/zt-3u9oid9q8-HLUBmMVWYK~g9HFo4U4raA)!

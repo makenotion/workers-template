@@ -3,74 +3,363 @@
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
 - `.examples/` has focused samples (sync, tool, automation, OAuth).
+- Shared agent skills live in `.agents/skills/`. `.claude/skills` is kept as a compatibility symlink for Claude-specific discovery.
 - Generated: `dist/` build output, `workers.json` CLI config.
 
 ## Worker & Capability API (SDK)
-`@notionhq/workers` provides `Worker`, schema helpers, and builders; the `ntn` CLI powers worker management.
-
-### Agent tool calls
+- `@notionhq/workers` provides `Worker`, schema helpers, and builders; the `ntn` CLI powers worker management.
+- Capability keys are unique strings used by the CLI (e.g., `ntn workers exec tasksSync`).
 
 ```ts
 import { Worker } from "@notionhq/workers";
-import * as j from "@notionhq/workers/schema-builder";
+import * as Builder from "@notionhq/workers/builder";
+import * as Schema from "@notionhq/workers/schema";
 
 const worker = new Worker();
 export default worker;
 
+// Declare a database
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "ID",
+	schema: { properties: { Name: Schema.title(), ID: Schema.richText() } },
+});
+
+// Declare a pacer for the upstream API
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// Declare a sync that writes to the database
+worker.sync("tasksSync", {
+	database: tasks,
+	execute: async (state) => {
+		await myApi.wait();
+		const items = await fetchItems(state?.page ?? 1);
+		return {
+			changes: items.map((i) => ({
+				type: "upsert" as const, key: i.id,
+				properties: { Name: Builder.title(i.name), ID: Builder.richText(i.id) },
+			})),
+			hasMore: false,
+		};
+	},
+});
+
 worker.tool("sayHello", {
 	title: "Say Hello",
 	description: "Return a greeting",
-	schema: j.object({
-		name: j.string().description("The name to greet"),
-	}),
-	execute: ({ name }, _context) => `Hello, ${name}`,
+	schema: { type: "object", properties: { name: { type: "string" } }, required: ["name"], additionalProperties: false },
+	execute: ({ name }, { notion }) => `Hello, ${name}`,
 });
+
+worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
 ```
 
-A worker with one or more tools is attachable to Notion agents. Each `tool` becomes a callable function for the agent:
-- `title` and `description` are used both in the Notion UI as well as a helpful description to your agent.
-- `schema` specifies what data the agent must supply. Use the schema builder (`@notionhq/workers/schema-builder`) instead of raw JSON Schema objects — it provides autocompletion, type inference, and guarantees compliance with model provider constraints (auto `required`, `additionalProperties: false`, etc.).
+- All `execute` handlers receive a Notion SDK client in the second argument as `context.notion`.
 
-### OAuth
+- For user-managed OAuth, supply `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
+- After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
 
-```
-const myOAuth = worker.oauth("myOAuth", {
-	name: "my-provider",
-	authorizationEndpoint: "https://provider.example.com/oauth/authorize",
-	tokenEndpoint: "https://provider.example.com/oauth/token",
-	scope: "read write",
-	clientId: "1234567890",
-	clientSecret: process.env.MY_CUSTOM_OAUTH_CLIENT_SECRET ?? "",
-	authorizationParams: {
-		access_type: "offline",
-		prompt: "consent",
+### Sync
+
+#### Databases, Pacers, and Syncs
+
+Syncs write data into Notion databases. Databases are declared separately and referenced by handle:
+
+```ts
+// 1. Declare a database
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "Task ID",
+	schema: {
+		properties: {
+			"Task Name": Schema.title(),
+			"Task ID": Schema.richText(),
+			Status: Schema.select([{ name: "Open" }, { name: "Done", color: "green" }]),
+		},
+	},
+});
+
+// 2. Declare a pacer for the upstream API
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// 3. Declare a sync
+worker.sync("tasksSync", {
+	database: tasks,
+	schedule: "30m",
+	execute: async (state) => {
+		await myApi.wait();
+		const { items, hasMore } = await fetchTasks(state?.page ?? 1);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+				},
+			})),
+			hasMore,
+			nextState: hasMore ? { page: (state?.page ?? 1) + 1 } : undefined,
+		};
 	},
 });
 ```
 
-The OAuth capability allows you to perform the three legged OAuth flow after specifying parameters of your OAuth client: `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
+Multiple syncs can write to the same database. Multiple syncs can share a pacer — the server apportions the budget evenly across all syncs that use it.
 
-After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
+#### Pacers (Rate Limiting)
 
-### Other capabilities
+**Always declare a pacer** for any sync that calls an external API. Research the API's rate limits before implementing. If the limits are variable (e.g. Salesforce, where you can purchase more API calls), ask the user what budget to allocate.
 
-There are additional capability types in the SDK but these are restricted to a private alpha. Only Agent tools and OAuth are generally available.
+- Call `await pacer.wait()` before **every** API request inside `execute`.
+- The pacer ensures requests are evenly spaced over the interval window.
+- If 4 syncs share a pacer with `allowedRequests: 100, intervalMs: 60_000`, each sync gets ~25 requests/minute.
 
-| Capability | Availability |
-|------------|--------------|
-| Agent tools | Generally available |
-| OAuth (user-managed) | Generally available |
-| OAuth (Notion-managed) | Private alpha |
-| Syncs | Private alpha |
-| Automations | Private alpha |
+```ts
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// Inside execute:
+await myApi.wait();
+const data = await fetchFromApi();
+```
+
+#### Choosing a Sync Strategy
+
+**Simple replace sync** — For truly small data sources (<1k records) or APIs with no change-tracking support. One sync, replace mode. Every cycle returns the full dataset; records not returned are deleted via mark-and-sweep.
+
+**Backfill + delta pair** — For everything else (recommended for most real integrations). Two syncs writing to the same database:
+- **Backfill** (replace mode, `schedule: "manual"`): Paginates the entire upstream dataset. Triggered manually via CLI. Cleans up drift, backfills new schema properties, catches deletes the delta can't detect.
+- **Delta** (incremental mode, frequent schedule like `"5m"` or `"30m"`): Fetches only recent changes via `updated_since`, change feeds, etc. Keeps Notion current with minimal API usage.
+
+Use backfill + delta whenever the upstream API supports any form of change tracking (`updated_since`, `modified_after`, change feeds, webhooks). Most enterprise APIs do (Salesforce, Jira, Linear, Stripe, GitHub, etc.).
+
+##### Delete handling
+
+- **API supports delta deletes** (returns deleted records in change feed): Emit `{ type: "delete", key }` in the delta sync.
+- **API doesn't, but deletes are rare or irrelevant** (e.g. Stripe subscriptions are canceled not deleted, Jira issues are closed not deleted): No action needed — the upstream record still exists, just in a different state.
+- **API doesn't, and deletes matter**: The backfill sync handles this. Its replace-mode mark-and-sweep deletes records no longer present upstream.
+
+#### Simple Replace Sync Example
+
+```ts
+const records = worker.database("records", {
+	type: "managed",
+	initialTitle: "Records",
+	primaryKeyProperty: "ID",
+	schema: { properties: { Name: Schema.title(), ID: Schema.richText() } },
+});
+
+const myApi = worker.pacer("myApi", { allowedRequests: 10, intervalMs: 1000 });
+
+worker.sync("recordsSync", {
+	database: records,
+	mode: "replace",
+	schedule: "1h",
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await myApi.wait();
+		const { items, hasMore } = await fetchPage(page, 100);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: { Name: Builder.title(item.name), ID: Builder.richText(item.id) },
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
+	},
+});
+```
+
+#### Backfill + Delta Example
+
+```ts
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "Task ID",
+	schema: {
+		properties: {
+			"Task Name": Schema.title(),
+			"Task ID": Schema.richText(),
+			Status: Schema.select([{ name: "Open" }, { name: "Done", color: "green" }]),
+		},
+	},
+});
+
+const taskApi = worker.pacer("taskApi", { allowedRequests: 10, intervalMs: 1000 });
+
+// Backfill: paginates full dataset, runs manually.
+// To re-backfill: ntn workers sync state reset tasksBackfill && ntn workers sync trigger tasksBackfill
+worker.sync("tasksBackfill", {
+	database: tasks,
+	mode: "replace",
+	schedule: "manual",
+	execute: async (state) => {
+		const page = state?.page ?? 1;
+		await taskApi.wait();
+		const { items, hasMore } = await fetchAllTasks(page, 100);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+				},
+			})),
+			hasMore,
+			nextState: hasMore ? { page: page + 1 } : undefined,
+		};
+	},
+});
+
+// Delta: fetches recent changes, runs every 5 minutes.
+worker.sync("tasksDelta", {
+	database: tasks,
+	mode: "incremental",
+	schedule: "5m",
+	execute: async (state) => {
+		const cursor = state?.cursor;
+		await taskApi.wait();
+		const { items, nextCursor } = await fetchTaskChanges(cursor);
+		return {
+			changes: items.map((item) => ({
+				type: "upsert" as const,
+				key: item.id,
+				properties: {
+					"Task Name": Builder.title(item.name),
+					"Task ID": Builder.richText(item.id),
+					Status: Builder.select(item.status),
+				},
+			})),
+			hasMore: Boolean(nextCursor),
+			nextState: nextCursor ? { cursor: nextCursor } : undefined,
+		};
+	},
+});
+```
+
+#### Pagination
+
+Syncs run in a "sync cycle": a back-to-back chain of `execute` calls that starts at a scheduled trigger and ends when an execution returns `hasMore: false`.
+
+- Always paginate. Returning too many changes in one execution will fail. Start with batch sizes of ~100.
+- Return `hasMore: true` and `nextState` to continue; `hasMore: false` to finish.
+- `nextState` can be any serializable value: cursor string, page number, timestamp, or complex object.
+
+#### Schedule
+
+Set `schedule` on a sync to control how often it runs:
+- `"continuous"`: run as fast as possible
+- `"manual"`: only via CLI trigger
+- Interval string: `"5m"`, `"30m"`, `"1h"`, `"1d"` (min `"1m"`, max `"7d"`)
+- Default: `"30m"`
+
+#### Relations
+
+Two databases can relate to one another using `Schema.relation(syncKey)` and `Builder.relation(primaryKey)`:
+
+```ts
+const projects = worker.database("projects", {
+	type: "managed",
+	initialTitle: "Projects",
+	primaryKeyProperty: "Project ID",
+	schema: { properties: { "Project Name": Schema.title(), "Project ID": Schema.richText() } },
+});
+
+const tasks = worker.database("tasks", {
+	type: "managed",
+	initialTitle: "Tasks",
+	primaryKeyProperty: "Task ID",
+	schema: {
+		properties: {
+			"Task Name": Schema.title(),
+			"Task ID": Schema.richText(),
+			// Reference the sync key that populates the related database
+			Project: Schema.relation("projectsSync", { twoWay: true, relatedPropertyName: "Tasks" }),
+		},
+	},
+});
+
+worker.sync("projectsSync", { database: projects, execute: async () => { ... } });
+worker.sync("tasksSync", {
+	database: tasks,
+	execute: async () => ({
+		changes: [{
+			type: "upsert" as const,
+			key: "task-1",
+			properties: {
+				"Task Name": Builder.title("Write docs"),
+				"Task ID": Builder.richText("task-1"),
+				Project: [Builder.relation("proj-1")], // array of relation refs
+			},
+		}],
+		hasMore: false,
+	}),
+});
+```
+
+### Sync Management (CLI)
+
+**Monitor sync status:**
+```shell
+ntn workers sync status              # live-updating watch mode (polls every 5s)
+ntn workers sync status <key>        # filter to a specific sync capability
+ntn workers sync status --no-watch   # print once and exit
+ntn workers sync status --interval 10 # custom poll interval in seconds
+```
+
+Status labels:
+- **HEALTHY** — last run succeeded
+- **INITIALIZING** — deployed but hasn't succeeded yet
+- **WARNING** — 1–2 consecutive failures
+- **ERROR** — 3+ consecutive failures
+- **DISABLED** — capability is disabled
+
+**Preview a sync (inspect output without writing):**
+```shell
+ntn workers sync trigger <key> --preview                   # run execute, show objects, don't write to the database
+ntn workers sync trigger <key> --preview --context '{"page":2}'  # resume from a previous preview's nextContext
+```
+Preview calls your sync's `execute` function and shows the objects it would produce, but **does not write anything to the Notion database**. Use it to verify your sync logic and inspect the data before committing to a real run. When piped, outputs raw JSON.
+
+**Trigger a sync (write immediately, bypass schedule):**
+```shell
+ntn workers sync trigger <key>
+```
+Trigger starts a **real** sync cycle that writes to the database, bypassing the normal schedule. Use it to push changes immediately rather than waiting for the next scheduled run.
+
+**Reset sync state (restart from scratch):**
+```shell
+ntn workers sync state reset <key>
+```
+Clears the cursor and stats so the next run starts from the beginning.
+
+**Enable / disable a sync:**
+```shell
+ntn workers capabilities list            # show all capabilities
+ntn workers capabilities disable <key>   # pause a sync
+ntn workers capabilities enable <key>    # resume a sync
+```
+
+> **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.
 
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
 - `npm run build`: compile TypeScript to `dist/`.
 - `npm run check`: type-check only (no emit).
 - `ntn login`: connect to a Notion workspace.
-- `ntn workers deploy`: build and publish capabilities.
-- `ntn workers exec <capability> -d '<json>'`: run a sync or tool. Run after `deploy` or with `--local`.
+- `ntn workers deploy`: build and publish capabilities. Does not reset sync state.
+- `ntn workers exec <capability>`: run a sync or tool.
+- `ntn workers sync status`: monitor sync health (live-updating).
+- `ntn workers sync trigger <key> --preview`: preview sync output without writing to the database.
+- `ntn workers sync trigger <key>`: trigger a real sync immediately (writes to the database).
 
 ## Debugging & Monitoring Runs
 Use `ntn workers runs` to inspect run history and logs.
@@ -97,9 +386,32 @@ ntn workers runs list --plain | grep tasksSync | head -n1 | cut -f1 | xargs -I{}
 
 The `--plain` flag outputs tab-separated values without formatting, making it easy to pipe to other commands.
 
-**Print out CLI configuration debug overview (Markdown):**
+### Debugging Syncs
+
+**Check sync health:**
 ```shell
-ntn debug
+ntn workers sync status
+```
+Look at failure counts, error messages, and last succeeded times.
+
+**Sync not running?** Check if the capability is disabled:
+```shell
+ntn workers capabilities list
+```
+
+**Preview what a sync would produce (without writing):**
+```shell
+ntn workers sync trigger <key> --preview
+```
+
+**Retry a failed sync (writes to the database):**
+```shell
+ntn workers sync trigger <key>
+```
+
+**Sync in a bad state?** Reset the cursor and restart:
+```shell
+ntn workers sync state reset <key>
 ```
 
 ## Coding Style & Naming Conventions
