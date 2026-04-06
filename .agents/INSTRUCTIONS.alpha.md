@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
-- `.examples/` has focused samples (sync, tool, automation, OAuth).
+- `.examples/` has focused samples (sync, tool, automation, OAuth, webhook).
 - Generated: `dist/` build output, `workers.json` CLI config.
 
 ## Worker & Capability API (SDK)
@@ -40,6 +40,16 @@ worker.automation("sendWelcomeEmail", {
 });
 
 worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
+
+worker.webhook("onGithubPush", {
+	title: "GitHub Push Webhook",
+	description: "Handles push events from GitHub",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			console.log("Push:", event.body);
+		}
+	},
+});
 ```
 
 - All `execute` handlers receive a Notion SDK client in the second argument as `context.notion`.
@@ -162,6 +172,35 @@ worker.sync("tasksSync", {
 	},
 });
 ```
+
+### Webhooks
+
+Webhooks expose HTTP endpoints that external services can call. After deploying, the CLI prints the webhook URL. Use `ntn workers webhooks list` to see URLs at any time.
+
+The execute handler receives an array of `WebhookEvent` objects. Each event contains `body`, `headers`, `method`, and `webhookName`.
+
+```ts
+worker.webhook("onExternalEvent", {
+	title: "External Event Handler",
+	description: "Processes incoming webhook requests",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			console.log("Method:", event.method);
+			console.log("Body:", JSON.stringify(event.body));
+			// Use event.headers to access request headers
+		}
+	},
+});
+```
+
+**Retry policy:** Failed executions retry up to 3 times by default. Customize with `retryPolicy: { maxRetries: 2 }` (max 3).
+
+**Security:** Each webhook gets a unique ID in the URL path that acts as a shared secret. The URL format is:
+```
+https://www.notion.so/webhooks/worker/{spaceId}/{workerId}/{uniqueWebhookId}/{webhookName}
+```
+
+This full URL can be retrieved using the `notion workers webhooks ls` command.
 
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
