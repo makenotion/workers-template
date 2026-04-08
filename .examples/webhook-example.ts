@@ -23,11 +23,18 @@ export default worker;
 function verifyGitHubSignature(
 	rawBody: string,
 	headers: Record<string, string>,
-	secret: string,
-): boolean {
+): void {
+
+	const secret = process.env.GITHUB_WEBHOOK_SECRET;
+	if (!secret) {
+		throw new WebhookVerificationError(
+			"GITHUB_WEBHOOK_SECRET not configured",
+		);
+	}
+
 	const signature = headers["x-hub-signature-256"];
 	if (!signature?.startsWith("sha256=")) {
-		return false;
+		throw new WebhookVerificationError("Invalid GitHub signature");
 	}
 
 	const expected = `sha256=${crypto
@@ -35,31 +42,26 @@ function verifyGitHubSignature(
 		.update(rawBody)
 		.digest("hex")}`;
 
-	// Use timing-safe comparison to prevent timing attacks
 	if (signature.length !== expected.length) {
-		return false;
+		throw new WebhookVerificationError("Invalid GitHub signature");
 	}
-	return crypto.timingSafeEqual(
+
+	// Use timing-safe comparison to prevent timing attacks
+	if (!crypto.timingSafeEqual(
 		Buffer.from(signature),
 		Buffer.from(expected),
-	);
+	)) {
+		throw new WebhookVerificationError("Invalid GitHub signature");
+	}
 }
 
 worker.webhook("onGithubPush", {
 	title: "GitHub Push Webhook",
 	description: "Handles push events from GitHub repositories",
 	execute: async (events) => {
-		const secret = process.env.GITHUB_WEBHOOK_SECRET;
-		if (!secret) {
-			throw new WebhookVerificationError(
-				"GITHUB_WEBHOOK_SECRET not configured",
-			);
-		}
 
 		for (const event of events) {
-			if (!verifyGitHubSignature(event.rawBody, event.headers, secret)) {
-				throw new WebhookVerificationError("Invalid GitHub signature");
-			}
+			verifyGitHubSignature(event.rawBody, event.headers);
 
 			// Signature verified — safe to process
 			const body = event.body;
