@@ -204,6 +204,8 @@ https://www.notion.so/webhooks/worker/{spaceId}/{workerId}/{uniqueWebhookId}/{we
 
 This full URL can be retrieved using the `notion workers webhooks ls` command.
 
+It is also the responsibility of the worker to verify the webhook. Throw WebhookVerificationError if the payload is not valid. 5 invalid payloads in a row will cause webhooks to short circuit until redeployed.
+
 ### Sync Management (CLI)
 
 **Monitor sync status:**
