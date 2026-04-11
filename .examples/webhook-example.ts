@@ -1,35 +1,75 @@
 /**
  * Webhooks are only available in a private alpha.
+ *
+ * This example shows how to verify GitHub webhook signatures using
+ * HMAC-SHA256. Set GITHUB_WEBHOOK_SECRET via `ntn workers env set`.
+ *
+ * After 5 consecutive WebhookVerificationError throws, the platform
+ * short-circuits and rejects all incoming requests without executing
+ * the handler. Redeploying the worker resets the counter.
  */
 
-import { Worker } from "@notionhq/workers";
+import crypto from "crypto";
+import { Worker, WebhookVerificationError } from "@notionhq/workers";
 
 const worker = new Worker();
 export default worker;
 
 /**
- * Example webhook that receives inbound HTTP requests and logs them.
- *
- * After deploying, the CLI prints the webhook URL. Register it with
- * any external service that supports outgoing webhooks.
- *
- * The execute handler receives an array of events (currently always
- * one, but the interface supports future batching).
+ * Verify a GitHub webhook signature.
+ * GitHub sends the HMAC-SHA256 signature in the X-Hub-Signature-256 header
+ * as "sha256={hex}". The raw body must be used for verification.
  */
-worker.webhook("onExternalEvent", {
-	title: "External Event Webhook",
-	description: "Handles inbound webhook events from an external service",
-	execute: async (events, { notion }) => {
-		for (const event of events) {
-			console.log(`Received ${event.method} request`, event.body);
+function verifyGitHubSignature(
+	rawBody: string,
+	headers: Record<string, string>,
+): void {
 
-			// Example: create a Notion page for each webhook event
-			// await notion.pages.create({
-			//   parent: { database_id: "your-database-id" },
-			//   properties: {
-			//     Name: { title: [{ text: { content: "New event received" } }] },
-			//   },
-			// });
+	const secret = process.env.GITHUB_WEBHOOK_SECRET;
+	if (!secret) {
+		throw new WebhookVerificationError(
+			"GITHUB_WEBHOOK_SECRET not configured",
+		);
+	}
+
+	const signature = headers["x-hub-signature-256"];
+	if (!signature?.startsWith("sha256=")) {
+		throw new WebhookVerificationError("Invalid GitHub signature");
+	}
+
+	const expected = `sha256=${crypto
+		.createHmac("sha256", secret)
+		.update(rawBody)
+		.digest("hex")}`;
+
+	if (signature.length !== expected.length) {
+		throw new WebhookVerificationError("Invalid GitHub signature");
+	}
+
+	// Use timing-safe comparison to prevent timing attacks
+	if (!crypto.timingSafeEqual(
+		Buffer.from(signature),
+		Buffer.from(expected),
+	)) {
+		throw new WebhookVerificationError("Invalid GitHub signature");
+	}
+}
+
+worker.webhook("onGithubPush", {
+	title: "GitHub Push Webhook",
+	description: "Handles push events from GitHub repositories",
+	execute: async (events) => {
+
+		for (const event of events) {
+			verifyGitHubSignature(event.rawBody, event.headers);
+
+			// Signature verified — safe to process
+			const body = event.body;
+			const ref = body.ref as string | undefined;
+			const pusher = body.pusher as { name?: string } | undefined;
+			console.log(
+				`Verified push to ${ref ?? "unknown"} by ${pusher?.name ?? "unknown"}`,
+			);
 		}
 	},
 });
