@@ -186,7 +186,7 @@ Define the Notion database shape with `Schema` types and build values with `Buil
 | `Schema.file()` | `Builder.file("https://...", "name")` | File URL + optional display name |
 | `Schema.number()` | `Builder.number(42)` | Number. Optional format: `Schema.number("percent")` |
 | `Schema.date()` | `Builder.date("2024-01-15")` | Date (YYYY-MM-DD). Also: `Builder.dateTime("2024-01-15T10:30:00Z")`, `Builder.dateRange(start, end)` |
-| `Schema.select([...])` | `Builder.select("Option A")` | Single select. Define options: `Schema.select([{ name: "A" }, { name: "B" }])`. **Options must have non-empty `name` values** — `Schema.select([])` and `{ name: "" }` are not supported. `Builder.select("")` will also fail; skip the property or omit it from the change instead of passing an empty string. |
+| `Schema.select([...])` | `Builder.select("Option A")` | Single select. Define options: `Schema.select([{ name: "A" }, { name: "B" }])`. **Options must have non-empty `name` values** — `Schema.select([])` and `{ name: "" }` are not supported. |
 | `Schema.multiSelect([...])` | `Builder.multiSelect("A", "B")` | Multi select |
 | `Schema.status(...)` | `Builder.status("Done")` | Status with groups |
 | `Schema.people()` | `Builder.people("email@co.com")` | People by email |
