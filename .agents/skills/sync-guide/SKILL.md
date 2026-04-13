@@ -218,7 +218,7 @@ changes: [{
 6. **Forgetting first-run handling** — `state` is `undefined` on first call. Use `state?.cursor ?? null`.
 7. **Forgetting that backfill + delta share a database** — both syncs must use the same `worker.database()` handle and the same key/properties shape.
 8. **Not triggering the backfill sync** — the backfill sync with `schedule: "manual"` won't run automatically. Trigger it on deploy or periodically to clean up deleted records.
-9. **Empty select values** — `Schema.select()` requires at least one option with a non-empty `name`. `Schema.select([])` and `{ name: "" }` are not supported. `Builder.select("")` will also fail at runtime. If the upstream value can be empty or missing, skip the property or omit it from the change instead of passing an empty string.
+9. **Empty select values** — `Schema.select()` requires at least one option with a non-empty `name`. `Schema.select([])` and `{ name: "" }` are not supported.
 
 ## CLI Commands for Sync Development
 
