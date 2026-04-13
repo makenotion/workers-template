@@ -110,8 +110,6 @@ worker.sync("tasksSync", {
 
 Multiple syncs can write to the same database. Multiple syncs can share a pacer — the server apportions the budget evenly across all syncs that use it.
 
-> **Select values must be non-empty.** `Schema.select()` requires at least one option, and each option must have a non-empty `name` (e.g., `{ name: "Open" }`). `Schema.select([])` and `{ name: "" }` are not supported. Similarly, `Builder.select("")` will fail — if the upstream value is empty or missing, skip the property or omit it from the change rather than passing an empty string.
-
 #### Pacers (Rate Limiting)
 
 **Always declare a pacer** for any sync that calls an external API. Research the API's rate limits before implementing. If the limits are variable (e.g. Salesforce, where you can purchase more API calls), ask the user what budget to allocate.
