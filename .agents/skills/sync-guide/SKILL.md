@@ -186,7 +186,7 @@ Define the Notion database shape with `Schema` types and build values with `Buil
 | `Schema.file()` | `Builder.file("https://...", "name")` | File URL + optional display name |
 | `Schema.number()` | `Builder.number(42)` | Number. Optional format: `Schema.number("percent")` |
 | `Schema.date()` | `Builder.date("2024-01-15")` | Date (YYYY-MM-DD). Also: `Builder.dateTime("2024-01-15T10:30:00Z")`, `Builder.dateRange(start, end)` |
-| `Schema.select([...])` | `Builder.select("Option A")` | Single select. Define options: `Schema.select([{ name: "A" }, { name: "B" }])`. **Options must have non-empty `name` values** — `Schema.select([])` and `{ name: "" }` are not supported. `Builder.select("")` will also fail; skip the property or omit it from the change instead of passing an empty string. |
+| `Schema.select([...])` | `Builder.select("Option A")` | Single select. Define options: `Schema.select([{ name: "A" }, { name: "B" }])` |
 | `Schema.multiSelect([...])` | `Builder.multiSelect("A", "B")` | Multi select |
 | `Schema.status(...)` | `Builder.status("Done")` | Status with groups |
 | `Schema.people()` | `Builder.people("email@co.com")` | People by email |
@@ -218,7 +218,6 @@ changes: [{
 6. **Forgetting first-run handling** — `state` is `undefined` on first call. Use `state?.cursor ?? null`.
 7. **Forgetting that backfill + delta share a database** — both syncs must use the same `worker.database()` handle and the same key/properties shape.
 8. **Not triggering the backfill sync** — the backfill sync with `schedule: "manual"` won't run automatically. Trigger it on deploy or periodically to clean up deleted records.
-9. **Empty select values** — `Schema.select()` requires at least one option with a non-empty `name`. `Schema.select([])` and `{ name: "" }` are not supported. `Builder.select("")` will also fail at runtime. If the upstream value can be empty or missing, skip the property or omit it from the change instead of passing an empty string.
 
 ## CLI Commands for Sync Development
 
