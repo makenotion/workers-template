@@ -16,7 +16,7 @@ to build tool calls for Notion custom agents and sync external data into Notion 
 Install the `ntn` CLI:
 
 ```shell
-npm i -g ntn
+curl -fsSL https://ntn.dev | bash
 ```
 
 Scaffold a new worker:
