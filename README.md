@@ -18,7 +18,7 @@ A worker is a small Node/TypeScript program hosted by Notion. Workers have two c
 Install the `ntn` CLI and scaffold a new worker:
 
 ```shell
-npm i -g ntn
+curl -fsSL https://ntn.dev | bash
 ntn workers new
 cd my-worker
 ```
