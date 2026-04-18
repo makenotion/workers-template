@@ -179,7 +179,7 @@ worker.sync("tasksSync", {
 
 Webhooks expose HTTP endpoints that external services can call. After deploying, the CLI prints the webhook URL. Use `ntn workers webhooks list` to see URLs at any time.
 
-The execute handler receives an array of `WebhookEvent` objects. Each event contains `body`, `headers`, `method`, and `webhookName`.
+The execute handler receives an array of `WebhookEvent` objects. Each event contains `deliveryId` (stable idempotency key across retries), `body` (parsed JSON), `rawBody` (string, for signature verification), `headers`, and `method`.
 
 ```ts
 worker.webhook("onExternalEvent", {
