@@ -23,6 +23,9 @@ ntn workers new
 cd my-worker
 ```
 
+> [!TIP]
+> The template ships with a `/sync` slash command in your coding agent (Claude Code, Codex, etc.) that scaffolds a new sync capability interactively — it asks about your data source, mode, and pagination, then generates working code.
+
 ## Tools quickstart
 
 A tool gives your Notion agent a new ability. Here's a simple greeting tool in `src/index.ts`:
@@ -54,7 +57,11 @@ ntn workers deploy
 
 ## Syncs quickstart
 
-A sync pulls data from an external source into a Notion database. Here's a simple sync in `src/index.ts`:
+A sync pulls data from an external source into a Notion database.
+
+**Fast path:** run the `/sync` slash command in your coding agent (Claude Code, Codex, etc.) to scaffold a sync interactively. It walks through the data source, picks `replace` vs `incremental` + backfill, designs pagination, and writes the code into `src/index.ts`.
+
+**Manual path:** here's a simple sync in `src/index.ts`:
 
 ```ts
 import { Worker } from "@notionhq/workers";
