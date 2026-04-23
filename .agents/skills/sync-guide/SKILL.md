@@ -191,11 +191,11 @@ Define the Notion database shape with `Schema` types and build values with `Buil
 | `Schema.status(...)` | `Builder.status("Done")` | Status with groups |
 | `Schema.people()` | `Builder.people("email@co.com")` | People by email |
 | `Schema.place()` | `Builder.place({ latitude, longitude })` | Geographic location |
-| `Schema.relation("syncKey")` | `[Builder.relation("pk")]` | Relation. Value is an **array**. |
+| `Schema.relation("databaseKey")` | `[Builder.relation("pk")]` | Relation to another managed database. Value is an **array**. |
 
-Relations support two-way config:
+Relations use the related database key. Two-way relations are configured the same way:
 ```ts
-Schema.relation("otherSync", { twoWay: true, relatedPropertyName: "Back Link" })
+Schema.relation("otherDatabase", { twoWay: true, relatedPropertyName: "Back Link" })
 ```
 
 Row-level icons and page content:
