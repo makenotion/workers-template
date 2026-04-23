@@ -94,7 +94,7 @@ Guidelines:
 - Use `Schema.richText()` for the primary key property (the unique ID)
 - Use `Schema.url()`, `Schema.email()`, `Schema.date()`, `Schema.number()`,
   `Schema.checkbox()`, `Schema.select()` where the data type fits
-- Use `Schema.relation("otherSyncKey")` for cross-sync relations
+- Use `Schema.relation("otherDatabaseKey")` for relations to another managed database
 - Start with 10-20 properties — be generous, include most useful fields from the API
 - See the full type list in `.agents/skills/sync-guide/SKILL.md` under "Schema Reference"
 
