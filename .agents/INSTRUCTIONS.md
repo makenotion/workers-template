@@ -66,7 +66,7 @@ worker.oauth("googleAuth", {
 
 All `execute` handlers receive a `context.notion` object (a `@notionhq/client` SDK instance). You can use this to make API requests to Notion.
 
-However, `context.notion` is only **pre-authenticated** inside tool call `execute` callbacks. For tool calls through a Custom Agent, the platform sets `NOTION_API_TOKEN` automatically, using the permissions of the Custom Agent — no setup required.
+However, `context.notion` is only **pre-authenticated** when the worker is invoked by a Custom Agent. In that case, the platform sets `NOTION_API_TOKEN` automatically, using the permissions of the Custom Agent — no setup required.
 
 For all other capabilities (syncs, automations, webhooks), `context.notion` is **not** pre-authenticated. The user must set the `NOTION_API_TOKEN` environment variable themselves by:
 1. Creating an internal integration at https://www.notion.so/profile/integrations/internal
