@@ -251,6 +251,20 @@ ntn workers capabilities enable <key>    # resume a sync
 
 > **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.
 
+### Querying a database
+
+Use `ntn datasources query <data-source-id>` to list pages in a database. **The argument is a data source ID, not a database ID** — a database in Notion is a container for one or more data sources, and the public API queries data sources directly.
+
+If you only have a database ID, run `ntn datasources resolve <database-id>` first to list the data sources it contains:
+
+```shell
+ntn datasources resolve <database-id>
+```
+
+If exactly one data source is returned, retry the query with that ID. If multiple are returned, pick the one whose name matches what you want.
+
+When `ntn datasources query <id>` returns 404 or "Could not find data source", the ID is most likely a database ID — run `resolve` against it and retry with one of the data source IDs it lists.
+
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
 - `npm run build`: compile TypeScript to `dist/`.
