@@ -375,6 +375,9 @@ const githubAuth = worker.oauth("githubAuth", {
 });
 ```
 
+> [!NOTE]
+> A Notion-managed OAuth shorthand (`{ provider: "google" }`) also exists but is in alpha and behind a feature flag. Most developers should use the user-managed approach shown above.
+
 After deploying, configure your OAuth provider's redirect URL:
 
 ```shell

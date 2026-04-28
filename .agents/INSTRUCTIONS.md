@@ -52,12 +52,20 @@ worker.tool("sayHello", {
 	execute: ({ name }, { notion }) => `Hello, ${name}`,
 });
 
-worker.oauth("googleAuth", { name: "my-google-auth", provider: "google" });
+worker.oauth("googleAuth", {
+  name: "my-google-auth",
+  authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+  tokenEndpoint: "https://oauth2.googleapis.com/token",
+  scope: "openid email",
+  clientId: process.env.GOOGLE_CLIENT_ID ?? "",
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+});
 ```
 
 - All `execute` handlers receive a Notion SDK client in the second argument as `context.notion`.
 
-- For user-managed OAuth, supply `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
+- For user-managed OAuth (shown above), supply `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
+- **Note:** A Notion-managed OAuth shorthand (`{ provider: "google" }`) also exists but is in alpha and most users will not have access. Use the user-managed configuration above.
 - After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
 
 ### Sync

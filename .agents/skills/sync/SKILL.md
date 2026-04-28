@@ -193,7 +193,11 @@ two parts:
 2. **User token** — obtained through the OAuth flow *after* deploying. This is
    handled by the runtime automatically via `worker.oauth()` and `.accessToken()`.
 
-For OAuth syncs, you'll add a `worker.oauth()` call in the generated code:
+For OAuth syncs, you'll add a `worker.oauth()` call in the generated code.
+Always use `UserManagedOAuthConfiguration` (the shape with explicit endpoints and
+client credentials) rather than the `{ provider: "..." }` shorthand, as
+Notion-managed OAuth is in alpha and the user likely does not have access.
+
 ```ts
 const myAuth = worker.oauth("myAuth", {
   name: "my-provider",
