@@ -362,7 +362,7 @@ ntn workers capabilities enable <key>    # resume a sync
 
 Use `ntn datasources query <data-source-id>` to list pages in a database. **The argument is a data source ID, not a database ID** — a database in Notion is a container for one or more data sources, and the public API queries data sources directly.
 
-If you only have a database ID, page ID, or block ID, run `ntn datasources resolve <id>` first to list the data sources it contains:
+If you only have a database ID, run `ntn datasources resolve <database-id>` first to list the data sources it contains:
 
 ```shell
 ntn datasources resolve <database-id>
@@ -370,7 +370,7 @@ ntn datasources resolve <database-id>
 
 If exactly one data source is returned, retry the query with that ID. If multiple are returned, pick the one whose name matches what you want.
 
-When `ntn datasources query <id>` returns 404 or "Could not find data source", the ID is usually a database, page, or block — run `resolve` and retry with one of the data source IDs it lists.
+When `ntn datasources query <id>` returns 404 or "Could not find data source", the ID is most likely a database ID — run `resolve` against it and retry with one of the data source IDs it lists.
 
 ## Build, Test, and Development Commands
 - Node >= 22 and npm >= 10.9.2 (see `package.json` engines).
