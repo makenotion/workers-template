@@ -18,7 +18,7 @@ import * as Schema from "@notionhq/workers/schema";
 const worker = new Worker();
 export default worker;
 
-// Declare a database
+// Declare a sync target database (only written to by syncs — not for general-purpose storage)
 const tasks = worker.database("tasks", {
 	type: "managed",
 	initialTitle: "Tasks",
@@ -72,7 +72,9 @@ worker.oauth("googleAuth", {
 
 #### Databases, Pacers, and Syncs
 
-Syncs write data into Notion databases. Databases are declared separately and referenced by handle:
+`worker.database()` declares a sync target — a Notion database that syncs write into. **Databases are read-only from the worker's perspective: the only way to write to them is through syncs.** Do not use `worker.database()` to create general-purpose databases (e.g., for storing webhook payloads, tool results, or scratch data). For non-sync writes to Notion, use `context.notion` (the Notion SDK client) directly.
+
+Databases are declared separately and referenced by handle:
 
 ```ts
 // 1. Declare a database
