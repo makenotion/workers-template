@@ -206,8 +206,6 @@ worker.webhook("onExternalEvent", {
 });
 ```
 
-**Retry policy:** Failed executions retry up to 3 times by default. Customize with `retryPolicy: { maxRetries: 2 }` (max 3).
-
 **Security:** Each webhook gets a unique ID in the URL path that acts as a shared secret. The URL format is:
 ```
 https://www.notion.so/webhooks/worker/{spaceId}/{workerId}/{uniqueWebhookId}/{webhookName}
