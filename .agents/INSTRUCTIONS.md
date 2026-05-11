@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 - `src/index.ts` defines the worker and capabilities.
-- `.examples/` has focused samples (sync, tool, automation, OAuth).
+- `.examples/` has focused samples (sync, tool, automation, OAuth, webhook).
 - Shared agent skills live in `.agents/skills/`. `.claude/skills` is kept as a compatibility symlink for Claude-specific discovery.
 - Generated: `dist/` build output, `workers.json` CLI config.
 
@@ -59,6 +59,16 @@ worker.oauth("googleAuth", {
   scope: "openid email",
   clientId: process.env.GOOGLE_CLIENT_ID ?? "",
   clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+});
+
+worker.webhook("onGithubPush", {
+	title: "GitHub Push Webhook",
+	description: "Handles push events from GitHub",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			console.log("Push:", event.body);
+		}
+	},
 });
 ```
 
@@ -325,6 +335,37 @@ worker.sync("tasksSync", {
 	}),
 });
 ```
+
+### Webhooks
+
+Webhooks expose HTTP endpoints that external services can call. After deploying, the CLI prints the webhook URL. Use `ntn workers webhooks list` to see URLs at any time.
+
+The execute handler receives an array of `WebhookEvent` objects. Each event contains `deliveryId` (stable idempotency key across retries), `body` (parsed JSON), `rawBody` (string, for signature verification), `headers`, and `method`.
+
+```ts
+worker.webhook("onExternalEvent", {
+	title: "External Event Handler",
+	description: "Processes incoming webhook requests",
+	execute: async (events, { notion }) => {
+		for (const event of events) {
+			console.log("Method:", event.method);
+			console.log("Body:", JSON.stringify(event.body));
+			// Use event.headers to access request headers
+		}
+	},
+});
+```
+
+**Retry policy:** Failed executions retry up to 3 times by default. Customize with `retryPolicy: { maxRetries: 2 }` (max 3).
+
+**Security:** Each webhook gets a unique ID in the URL path that acts as a shared secret. The URL format is:
+```text
+https://www.notion.so/webhooks/worker/{spaceId}/{workerId}/{uniqueWebhookId}/{webhookName}
+```
+
+This full URL can be retrieved using the `ntn workers webhooks list` command.
+
+It is also the responsibility of the worker to verify the webhook. Throw `WebhookVerificationError` if the payload is not valid. 5 invalid payloads in a row will cause webhooks to short circuit until redeployed.
 
 ### Sync Management (CLI)
 
