@@ -1,6 +1,4 @@
 /**
- * Webhooks are only available in a private alpha.
- *
  * This example shows how to verify GitHub webhook signatures using
  * HMAC-SHA256. Set GITHUB_WEBHOOK_SECRET via `ntn workers env set`.
  *
