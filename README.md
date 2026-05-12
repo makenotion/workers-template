@@ -1,17 +1,15 @@
-# Notion Workers [alpha]
+# Notion Workers [beta]
 
 A worker is a small Node/TypeScript program hosted by Notion. Workers have two capability types:
 
 - **Tools** — callable functions for Notion custom agents
 - **Syncs** — sync external data sources into Notion
 
-> [!WARNING]
+> [!NOTE]
 >
-> This is an **extreme pre-release alpha** of Notion Workers. You probably
-> shouldn't use it for anything serious just yet. Also, it'll only be helpful
-> if you have access to Notion Custom Agents (and a workspace admin [opts in](https://www.notion.so/?target=ai)). We are still making breaking
-> changes to Notion Workers CLI, templates, and more. We aim to minimize
-> friction, but expect things to go wrong.
+> Notion Workers is in **beta**. We may still make breaking changes to the
+> CLI, templates, and SDK, but we'll document them in the changelog and aim
+> to minimize friction.
 
 ## Quick start
 
@@ -376,7 +374,7 @@ const githubAuth = worker.oauth("githubAuth", {
 ```
 
 > [!NOTE]
-> A Notion-managed OAuth shorthand (`{ provider: "google" }`) also exists but is in alpha and behind a feature flag. Most developers should use the user-managed approach shown above.
+> A Notion-managed OAuth shorthand (`{ provider: "google" }`) also exists but is behind a feature flag. Most developers should use the user-managed approach shown above.
 
 After deploying, configure your OAuth provider's redirect URL:
 
