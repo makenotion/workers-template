@@ -1,15 +1,12 @@
-# Notion Workers [alpha]
+# Notion Workers [beta]
 
 A worker is a small Node/TypeScript program hosted by Notion that you can use
 to build tool calls for Notion custom agents and sync external data into Notion databases.
 
-> [!WARNING]
+> [!NOTE]
 >
-> This is an **extreme pre-release alpha** of Notion Workers. You probably
-> shouldn't use it for anything serious just yet. Also, it'll only be helpful
-> if you have access to Notion Custom Agents (and a workspace admin [opts in](https://www.notion.so/?target=ai)). We are still making breaking
-> changes to Notion Workers CLI, templates, and more. We aim to minimize
-> friction, but expect things to go wrong.
+> Notion Workers is currently in beta. APIs, CLI commands, templates, and
+> hosting behavior may continue to evolve.
 
 ## Quick Start
 
