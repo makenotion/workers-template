@@ -112,7 +112,7 @@ ntn workers sync status
 
 ## Webhooks quickstart
 
-A webhook exposes an HTTP endpoint that external services (GitHub, Stripe, etc.) can call to push events into your worker.
+A webhook exposes an HTTP endpoint that external services (GitHub, Stripe, etc.) can call to push events into your worker:
 
 ```ts
 import { Worker } from "@notionhq/workers";
