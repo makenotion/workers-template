@@ -1,9 +1,10 @@
 # Notion Workers [beta]
 
-A worker is a small Node/TypeScript program hosted by Notion. Workers have two capability types:
+A worker is a small Node/TypeScript program hosted by Notion. Workers have three capability types:
 
 - **Tools** — callable functions for Notion custom agents
 - **Syncs** — sync external data sources into Notion
+- **Webhooks** — receive HTTP events from external services
 
 > [!NOTE]
 >
@@ -107,6 +108,36 @@ Deploy and your sync runs automatically on a schedule (default: every 30 minutes
 ```shell
 ntn workers deploy
 ntn workers sync status
+```
+
+## Webhooks quickstart
+
+A webhook exposes an HTTP endpoint that external services (GitHub, Stripe, etc.) can call to push events into your worker.
+
+```ts
+import { Worker } from "@notionhq/workers";
+
+const worker = new Worker();
+export default worker;
+
+worker.webhook("onExternalEvent", {
+	title: "External Event Handler",
+	description: "Processes incoming webhook requests",
+	execute: async (events) => {
+		for (const event of events) {
+			console.log("Delivery:", event.deliveryId);
+			console.log("Method:", event.method);
+			console.log("Body:", event.body);
+		}
+	},
+});
+```
+
+Deploy and grab the webhook URL to give to the external service:
+
+```shell
+ntn workers deploy
+ntn workers webhooks list
 ```
 
 ## Tools reference
@@ -334,6 +365,106 @@ ntn workers capabilities enable <key>   # resume a sync
 
 > [!NOTE]
 > Deploying does **not** reset sync state — syncs resume from their last cursor position. Use `ntn workers sync state reset <key>` to restart from scratch.
+
+## Webhooks reference
+
+### The event object
+
+The `execute` function receives an array of `WebhookEvent` objects:
+
+| Property | Type | Description |
+| :-- | :-- | :-- |
+| `deliveryId` | `string` | Unique ID for this delivery, stable across retries. |
+| `body` | `Record<string, unknown>` | Parsed JSON body (`{}` if not a JSON object). |
+| `rawBody` | `string` | Original request body as a string. Use for signature verification. |
+| `headers` | `Record<string, string>` | Request headers (lowercased names). |
+| `method` | `string` | HTTP method (webhook URLs accept `POST`). |
+
+### Verifying requests
+
+Most webhook providers sign requests with a shared secret. Verify using `event.rawBody` and `event.headers`, and throw `WebhookVerificationError` when verification fails:
+
+```ts
+import * as crypto from "node:crypto";
+import { WebhookVerificationError, Worker } from "@notionhq/workers";
+
+const worker = new Worker();
+export default worker;
+
+function verifyGitHubSignature(
+	rawBody: string,
+	headers: Record<string, string>,
+): void {
+	const secret = process.env.GITHUB_WEBHOOK_SECRET;
+	if (!secret) {
+		throw new WebhookVerificationError("GITHUB_WEBHOOK_SECRET not configured");
+	}
+
+	const signature = headers["x-hub-signature-256"];
+	if (!signature?.startsWith("sha256=")) {
+		throw new WebhookVerificationError("Invalid GitHub signature");
+	}
+
+	const expected = `sha256=${crypto
+		.createHmac("sha256", secret)
+		.update(rawBody)
+		.digest("hex")}`;
+
+	if (
+		signature.length !== expected.length ||
+		!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+	) {
+		throw new WebhookVerificationError("Invalid GitHub signature");
+	}
+}
+
+worker.webhook("onGithubPush", {
+	title: "GitHub Push Webhook",
+	description: "Handles push events from GitHub repositories",
+	execute: async (events) => {
+		for (const event of events) {
+			verifyGitHubSignature(event.rawBody, event.headers);
+			console.log("Verified GitHub event:", event.body);
+		}
+	},
+});
+```
+
+Store the signing secret before deploying:
+
+```shell
+ntn workers env set GITHUB_WEBHOOK_SECRET=your-secret
+```
+
+> [!WARNING]
+> After 5 consecutive `WebhookVerificationError` failures, Notion blocks the webhook. Redeploy the worker to reset the counter.
+
+### Webhook URLs
+
+Each webhook gets a unique URL that acts as a shared secret:
+
+```text
+https://www.notion.so/webhooks/worker/{spaceId}/{workerId}/{uniqueWebhookId}/{webhookName}
+```
+
+Use the CLI to view URLs:
+
+```shell
+ntn workers webhooks list
+```
+
+> [!WARNING]
+> Treat webhook URLs as secrets. Anyone with the full URL can send events unless you add signature verification.
+
+### Execution and retries
+
+Webhook requests are acknowledged with `202 Accepted` and your handler runs asynchronously. If your handler throws a non-verification error, Notion retries the run up to 3 times. `WebhookVerificationError` is never retried.
+
+### Webhook CLI commands
+
+```shell
+ntn workers webhooks list              # show webhook URLs
+```
 
 ## Authentication & secrets
 
@@ -593,6 +724,9 @@ ntn workers capabilities list
 ntn workers capabilities disable <syncKey>
 ntn workers capabilities enable <syncKey>
 
+# List webhook URLs
+ntn workers webhooks list
+
 # Manage authentication
 ntn login
 ntn logout
@@ -626,6 +760,6 @@ Store secrets in `.env` for local development:
 ntn workers env pull
 ```
 
-## Have a question?
+## Learn more
 
-Join the [Notion Dev Slack](https://join.slack.com/t/notiondevs/shared_invite/zt-3u9oid9q8-HLUBmMVWYK~g9HFo4U4raA)!
+Read the full [Workers documentation](https://developers.notion.com/workers/get-started/overview) or join the [Notion Dev Slack](https://join.slack.com/t/notiondevs/shared_invite/zt-3u9oid9q8-HLUBmMVWYK~g9HFo4U4raA).
