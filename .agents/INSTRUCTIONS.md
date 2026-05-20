@@ -401,11 +401,11 @@ ntn workers sync state reset <key>
 ```
 Clears the cursor and stats so the next run starts from the beginning.
 
-**Enable / disable a sync:**
+**Pause / resume a sync:**
 ```shell
 ntn workers capabilities list            # show all capabilities
-ntn workers capabilities disable <key>   # pause a sync
-ntn workers capabilities enable <key>    # resume a sync
+ntn workers sync pause <key>             # pause a sync
+ntn workers sync resume <key>            # resume a sync
 ```
 
 > **Note:** `ntn workers deploy` does **not** reset sync state. Syncs resume from their last cursor position after a deploy. Use `ntn workers sync state reset <key>` to explicitly restart from scratch.

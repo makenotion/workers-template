@@ -482,8 +482,8 @@ ntn workers sync state reset <syncKey>
 ntn workers capabilities list
 
 # Pause / resume a sync
-ntn workers capabilities disable <syncKey>
-ntn workers capabilities enable <syncKey>
+ntn workers sync pause <syncKey>
+ntn workers sync resume <syncKey>
 
 # List webhook URLs
 ntn workers webhooks list
