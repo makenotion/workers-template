@@ -19,8 +19,7 @@ curl -fsSL https://ntn.dev | bash
 Scaffold a new worker:
 
 ```shell
-ntn workers new
-# Follow the prompts to scaffold your worker
+ntn workers new my-worker
 cd my-worker
 ```
 

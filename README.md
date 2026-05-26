@@ -17,7 +17,7 @@ Install the `ntn` CLI and scaffold a new worker:
 
 ```shell
 curl -fsSL https://ntn.dev | bash
-ntn workers new
+ntn workers new my-worker
 cd my-worker
 ```
 
