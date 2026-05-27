@@ -60,11 +60,11 @@ All `execute` handlers receive a `context.notion` object (a `@notionhq/client` S
 However, `context.notion` is only **pre-authenticated** when it's a tool capability invoked by a Custom Agent. In that case, the platform sets `NOTION_API_TOKEN` automatically, using the permissions of the Custom Agent — no setup required.
 
 For all other capabilities (syncs, automations, webhooks), `context.notion` is **not** pre-authenticated. The user must set the `NOTION_API_TOKEN` environment variable themselves by:
-1. Creating an internal integration at https://www.notion.so/profile/integrations/internal
-2. Giving that integration access to the relevant pages and databases in Notion
+1. Creating a connection at https://app.notion.com/developers/connections
+2. Giving that connection access to the relevant pages and databases in Notion
 3. Adding the token to `.env` locally, or pushing it with `ntn workers env push` for deployed workers
 
-Before writing code that uses `context.notion` in a non-tool capability, check whether `NOTION_API_TOKEN` is configured: look for it in `.env` (e.g. `grep -q '^NOTION_API_TOKEN=' .env`). If it is not set, prompt the user to create an internal integration at https://www.notion.so/profile/integrations/internal and add the token to `.env`.
+Before writing code that uses `context.notion` in a non-tool capability, check whether `NOTION_API_TOKEN` is configured: look for it in `.env` (e.g. `grep -q '^NOTION_API_TOKEN=' .env`). If it is not set, prompt the user to create a connection at https://app.notion.com/developers/connections and add the token to `.env`.
 
 - For user-managed OAuth, supply `name`, `authorizationEndpoint`, `tokenEndpoint`, `clientId`, `clientSecret`, and `scope` (optional: `authorizationParams`, `callbackUrl`, `accessTokenExpireMs`).
 - After deploying a worker with an OAuth capability, the user must configure their OAuth provider's redirect URL to match the one assigned by Notion. Run `ntn workers oauth show-redirect-url` to get the redirect URL, then set it in the provider's OAuth app settings. **Always remind the user of this step after deploying any OAuth capability.**
