@@ -359,8 +359,8 @@ ntn workers sync status              # live-updating status
 ntn workers sync trigger <key> --preview  # preview output without writing to the database
 ntn workers sync trigger <key>           # trigger a real sync immediately
 ntn workers sync state reset <key>   # restart from scratch
-ntn workers capabilities disable <key>  # pause a sync
-ntn workers capabilities enable <key>   # resume a sync
+ntn workers sync pause <key>             # pause a sync
+ntn workers sync resume <key>            # resume a sync
 ```
 
 > [!NOTE]
@@ -721,8 +721,11 @@ ntn workers sync state reset <syncKey>
 ntn workers capabilities list
 
 # Pause / resume a sync
-ntn workers capabilities disable <syncKey>
-ntn workers capabilities enable <syncKey>
+ntn workers sync pause <syncKey>
+ntn workers sync resume <syncKey>
+
+# List webhook URLs
+ntn workers webhooks list
 
 # List webhook URLs
 ntn workers webhooks list
