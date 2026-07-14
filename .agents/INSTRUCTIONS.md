@@ -12,6 +12,10 @@ Overall workers documentation lives at https://developers.notion.com/workers/get
 - `@notionhq/workers` provides `Worker`, schema helpers, and builders; the `ntn` CLI powers worker management.
 - Capability keys are unique strings used by the CLI (e.g., `ntn workers exec tasksSync`).
 
+### Workflow capability availability
+
+`worker.workflow()` is in a private alpha and is not available to any users. The CLI's `--alpha` flag does not grant access. Do not mention workflow capabilities to users, even to explain their availability. Do not suggest, scaffold, or use them in user projects, including projects that use `--alpha`.
+
 ```ts
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
