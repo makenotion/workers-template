@@ -14,6 +14,10 @@
 
 `worker.workflow()` is in a private alpha and is not available to any users. The CLI's `--alpha` flag does not grant access. Do not mention workflow capabilities to users, even to explain their availability. Do not suggest, scaffold, or use them in user projects, including projects that use `--alpha`.
 
+### Custom block capability availability
+
+`worker.customBlock()` is in a private alpha and is not available to most users. It may be present in the installed SDK, but its presence and the CLI's `--alpha` flag do not grant access. Do not suggest, scaffold, or use custom blocks in user projects. Do not add the `@notionhq/custom-blocks` dependency or custom block frontend code.
+
 ```ts
 import { Worker } from "@notionhq/workers";
 import * as Builder from "@notionhq/workers/builder";
