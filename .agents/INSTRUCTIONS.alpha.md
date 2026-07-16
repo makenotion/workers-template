@@ -18,7 +18,9 @@
 
 ### Custom block capability
 
-`worker.customBlock()` declares a front-end web app that Notion serves in an iframe. It is a build-time/deploy-time capability with no `execute` handler, so it cannot be run with `ntn workers exec`.
+`worker.customBlock()` declares a front-end web app that Notion serves in an iframe. It is a build-time/deploy-time capability with no `execute` handler, so it cannot be run with `ntn workers exec`. A custom block has two SDK surfaces: `@notionhq/workers` declares how the block is built and which data-source schemas it expects, while `@notionhq/custom-blocks` allows the the iframe frontend code to communicate with the Notion host at runtime.
+
+Before scaffolding a custom block frontend, add `@notionhq/custom-blocks` to the worker's existing root `package.json` and install it from the worker root. The block frontend shares that package and its `node_modules`. Do not create a second `package.json` inside the Vite app. Read the installed package's README and docs for the current client API.
 
 #### Custom block sources
 
@@ -79,6 +81,8 @@ worker.customBlock("issueBoard", {
 ```
 
 Property types use Public API names such as `title`, `rich_text`, `number`, `select`, `multi_select`, `status`, `date`, `people`, `files`, `checkbox`, `url`, `email`, `phone_number`, `formula`, `relation`, and `rollup`.
+
+At render time, the block maps its configured bindings to the matching `dataSources` keys. Read the example source above with `useDataSource("issues")` from `@notionhq/custom-blocks/react`.
 
 ```ts
 import { Worker } from "@notionhq/workers";
