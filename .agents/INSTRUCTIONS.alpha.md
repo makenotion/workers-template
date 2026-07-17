@@ -18,71 +18,9 @@
 
 ### Custom block capability
 
-`worker.customBlock()` declares a front-end web app that Notion serves in an iframe. It is a build-time/deploy-time capability with no `execute` handler, so it cannot be run with `ntn workers exec`. A custom block has two SDK surfaces: `@notionhq/workers` declares how the block is built and which data-source schemas it expects, while `@notionhq/custom-blocks` allows the the iframe frontend code to communicate with the Notion host at runtime.
+`worker.customBlock()` is a private alpha. Before using it, confirm that the target workspace is explicitly enrolled; the CLI's `--alpha` flag only installs these instructions and does not grant access. The capability declares a front-end web app that Notion serves in an iframe. It is build-time/deploy-time only and cannot be run with `ntn workers exec`.
 
-Before scaffolding a custom block frontend, add `@notionhq/custom-blocks` to the worker's existing root `package.json` and install it from the worker root. The block frontend shares that package and its `node_modules`. Do not create a second `package.json` inside the Vite app. Read the installed package's README and docs for the current client API.
-
-#### Custom block sources
-
-A project source is the default. `path` points to a buildable project directory relative to the worker root. The deploy pipeline runs `npm run build` in that directory and serves its `dist` output by default:
-
-```ts
-worker.customBlock("issueBoard", {
-  path: "./views/issue-board",
-});
-```
-
-Use `command` and `output` to override those build defaults:
-
-```ts
-worker.customBlock("issueBoard", {
-  path: "./views/issue-board",
-  command: "npm run build-prod",
-  output: "build",
-});
-```
-
-Use a static source when the directory already contains browser assets that should be served as-is:
-
-```ts
-worker.customBlock("issueBoard", {
-  type: "static",
-  path: "./views/issue-board/dist",
-});
-```
-
-#### Custom block data-source schemas
-
-The optional `dataSources` field declares the schema a block expects. It does not bind the block to a concrete database. Schema keys and property keys are author-defined identifiers.
-
-```ts
-worker.customBlock("issueBoard", {
-  path: "./views/issue-board",
-  version: 1,
-  dataSources: {
-    issues: {
-      name: "Issues",
-      description: "The team's issues",
-      icon: { type: "emoji", emoji: "🐛" },
-      properties: {
-        title: {
-          name: "Title",
-          type: "title",
-        },
-        status: {
-          name: "Status",
-          description: "Workflow state",
-          type: "status",
-        },
-      },
-    },
-  },
-});
-```
-
-Property types use Public API names such as `title`, `rich_text`, `number`, `select`, `multi_select`, `status`, `date`, `people`, `files`, `checkbox`, `url`, `email`, `phone_number`, `formula`, `relation`, and `rollup`.
-
-At render time, the block maps its configured bindings to the matching `dataSources` keys. Read the example source above with `useDataSource("issues")` from `@notionhq/custom-blocks/react`.
+When creating or modifying a custom block, follow `.agents/skills/custom-blocks/SKILL.md`. It covers the worker declaration, shared root package, iframe SDK, local manifest, data sources, sandbox constraints, development, and deployment. Do not use the standalone `ncblock` CLI inside a worker project.
 
 ```ts
 import { Worker } from "@notionhq/workers";
