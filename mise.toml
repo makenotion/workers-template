@@ -1,0 +1,20 @@
+[tools]
+node = "26.5.0"
+
+[tasks."check:lint"]
+run = "npx oxlint"
+
+[tasks."check:format"]
+run = "npx oxfmt --check"
+
+[tasks.check]
+depends = ["check:*"]
+
+[tasks."fix:lint"]
+run = "npx oxlint --fix"
+
+[tasks."fix:format"]
+run = "npx oxfmt --write"
+
+[tasks.fix]
+depends = ["fix:*"]

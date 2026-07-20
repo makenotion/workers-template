@@ -1,22 +1,27 @@
 {
-	"name": "@notionhq/workers-template",
-	"version": "0.0.0",
-	"private": true,
-	"type": "module",
-	"scripts": {
-		"build": "tsc",
-		"check": "tsc --noEmit"
-	},
-	"engines": {
-		"node": ">=22.0.0",
-		"npm": ">=10.9.2"
-	},
-	"devDependencies": {
-		"@types/node": "^22.9.0",
-		"tsx": "^4.20.6",
-		"typescript": "^5.8.0"
-	},
-	"dependencies": {
-		"@notionhq/workers": ">=0.0.0"
-	}
+  "name": "@notionhq/workers-template-v2",
+  "version": "0.1.0",
+  "description": "Workers Template (v2)",
+  "keywords": [
+    "workers"
+  ],
+  "homepage": "https://github.com/makenotion/workers-template-v2#readme",
+  "bugs": {
+    "url": "https://github.com/makenotion/workers-template-v2/issues"
+  },
+  "license": "MIT",
+  "author": "Jonathan Clem <jclem@makenotion.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/makenotion/workers-template-v2.git"
+  },
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "oxfmt": "^0.59.0",
+    "oxlint": "^1.74.0"
+  }
 }
