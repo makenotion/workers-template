@@ -28,7 +28,7 @@ A project source is the default. `path` points to a buildable project directory 
 
 ```ts
 worker.customBlock("issueBoard", {
-  path: "./views/issue-board",
+  path: "./blocks/issue-board",
 });
 ```
 
@@ -36,7 +36,7 @@ Use `command` and `output` to override those build defaults:
 
 ```ts
 worker.customBlock("issueBoard", {
-  path: "./views/issue-board",
+  path: "./blocks/issue-board",
   command: "npm run build-prod",
   output: "build",
 });
@@ -47,17 +47,17 @@ Use a static source when the directory already contains browser assets that shou
 ```ts
 worker.customBlock("issueBoard", {
   type: "static",
-  path: "./views/issue-board/dist",
+  path: "./blocks/issue-board/dist",
 });
 ```
 
 #### Custom block data-source schemas
 
-The optional `dataSources` field declares the schema a block expects. It does not bind the block to a concrete database. Schema keys and property keys are author-defined identifiers.
+The optional `dataSources` field declares the schemas a block expects. It does not bind the block to concrete databases. Data-source keys and property keys are author-defined identifiers.
 
 ```ts
 worker.customBlock("issueBoard", {
-  path: "./views/issue-board",
+  path: "./blocks/issue-board",
   version: 1,
   dataSources: {
     issues: {
