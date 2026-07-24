@@ -20,7 +20,7 @@
 
 `worker.customBlock()` is a private alpha. Before using it, confirm that the target workspace is explicitly enrolled; the CLI's `--alpha` flag only installs these instructions and does not grant access. The capability declares a front-end web app that Notion serves in an iframe. It is build-time/deploy-time only and cannot be run with `ntn workers exec`.
 
-When creating or modifying a custom block, follow `.agents/skills/custom-blocks/SKILL.md`. It covers the worker declaration, shared root package, iframe SDK, local manifest, data sources, sandbox constraints, development, and deployment. Do not use the standalone `ncblock` CLI inside a worker project.
+When creating or modifying a custom block, follow `.agents/skills/custom-blocks/SKILL.md`. It covers the worker declaration, shared root package, iframe SDK, local manifest, data sources, sandbox constraints, development, and deployment.
 
 ```ts
 import { Worker } from "@notionhq/workers";
