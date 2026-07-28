@@ -75,14 +75,17 @@ For example, if syncing Jira issues, propose:
 const issuesDb = worker.database("issuesDb", {
   type: "managed",
   initialTitle: "Jira Issues",
-  primaryKeyProperty: "Issue Key",
+  primaryKeyProperty: "Jira ID",
   schema: {
     properties: {
-      "Issue Key": Schema.richText(),    // primaryKeyProperty — the unique ID
-      "Summary": Schema.title(),         // the main display field
-      "Status": Schema.select([...]),    // mapped from Jira statuses
-      "Assignee": Schema.richText(),     // or Schema.people() if email available
+      "Summary": Schema.title(),          // the main display field
+      "Status": Schema.select([...]),     // mapped from Jira statuses
+      "Priority": Schema.select([...]),
+      "Assignee": Schema.richText(),      // or Schema.people() if email available
+      "Project": Schema.richText(),
       "Updated": Schema.date(),
+      "Issue URL": Schema.url(),
+      "Jira ID": Schema.richText(),       // opaque primary key — useful for sync correctness, not the default view
     },
   },
 });
@@ -92,14 +95,34 @@ Guidelines:
 - Declare the database with `worker.database()` and reference the handle in `worker.sync()`
 - Every schema needs exactly one `Schema.title()` — pick the most descriptive field
 - Use `Schema.richText()` for the primary key property (the unique ID)
+- Treat property order as product design, not API order. Put the title first,
+  followed by the five properties that best help an end user recognize,
+  evaluate, or act on the record.
+- Keep opaque IDs, sync keys, timestamps used only for cursors, and other
+  implementation metadata out of the first six properties. Include a user-facing
+  identifier such as an order number or issue key early only when users genuinely
+  rely on it.
 - Use `Schema.url()`, `Schema.email()`, `Schema.date()`, `Schema.number()`,
   `Schema.checkbox()`, `Schema.select()` where the data type fits
 - Use `Schema.relation("otherDatabaseKey")` for relations to another managed database
 - Start with 10-20 properties — be generous, include most useful fields from the API
 - See the full type list in `.agents/skills/sync-guide/SKILL.md` under "Schema Reference"
 
-Present the proposed schema to the user and ask if they want to add, remove,
-or change any fields before generating code.
+Choose a page icon strategy at the same time. Prefer a stable upstream image
+when it carries meaning for the user, such as artwork or an avatar. Otherwise,
+pick a semantic Notion icon or emoji for the entity type. Avoid authenticated
+or short-lived image URLs; use the semantic fallback instead.
+
+For example, issue upserts could use:
+```ts
+icon: issue.iconUrl
+  ? Builder.imageIcon(issue.iconUrl)
+  : Builder.emojiIcon("🎫"),
+```
+
+Do not ask the user to rank fields or choose the icon. Present the proposed
+schema with the first six properties called out in order, state the icon
+strategy, and let the user adjust either before generating code.
 
 ### Step 4: Design the State Machine
 
@@ -233,11 +256,17 @@ Include in the generated code:
 - The `worker.sync()` call(s) referencing the database handle
 - For backfill+delta: two syncs targeting the same database, backfill with `schedule: "manual"`, delta with a timed schedule
 - A consistency buffer for delta syncs (if the API is eventually consistent)
+- An intentionally chosen `icon` on every upsert. Apply the same icon logic in
+  every sync path that writes to the database.
 - Inline comments explaining *why* each design choice was made
 - API calls using `fetch` with auth from `process.env`
 
 **Code generation checklist:**
 - [ ] Database declared with `worker.database()` and referenced by handle
+- [ ] Schema starts with the six properties most useful to the end user, in order
+- [ ] Opaque IDs and implementation metadata appear after the first six properties
+      unless they are genuinely user-facing
+- [ ] Every upsert includes a contextual icon, with the same strategy across all sync paths
 - [ ] Pacer declared with `worker.pacer()` for the upstream API
 - [ ] `await pacer.wait()` called before every `fetch` to the upstream API
 - [ ] State types are simple (no bi-modal discriminated unions)
@@ -257,6 +286,8 @@ Test the sync before deploying. This catches bugs early without a deploy cycle.
 2. Run `ntn workers exec <key> --local` to execute the sync locally.
    This runs the execute function on your machine with `.env` loaded.
    - Check: does it return data? Are properties populated correctly?
+   - Check: are the first six properties ordered as proposed, with opaque IDs later?
+   - Check: does each upsert have a contextual page icon?
    - Check: does `hasMore` look right? Does the cursor advance?
 
 3. If it returns `hasMore: true`, test the next page:
