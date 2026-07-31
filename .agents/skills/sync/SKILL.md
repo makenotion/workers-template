@@ -172,7 +172,13 @@ There are two patterns:
 For APIs where the user has a personal token or API key (e.g., Jira API token,
 GitHub PAT, simple API keys).
 
-Ask the user for their token and add it to `.env`:
+Prefer a brokered credential when the token is only used in outbound request
+headers to known domains. Follow `.agents/skills/auth-guide/SKILL.md` to declare
+it with `worker.credential()`.
+
+If the worker needs the plaintext token — for example, for signing or a request
+body — tell the user which variables are needed and have them add the values
+directly to `.env` themselves. Never ask them to send the values in chat:
 ```
 JIRA_API_TOKEN=...
 JIRA_EMAIL=user@example.com
@@ -234,7 +240,7 @@ Include in the generated code:
 - For backfill+delta: two syncs targeting the same database, backfill with `schedule: "manual"`, delta with a timed schedule
 - A consistency buffer for delta syncs (if the API is eventually consistent)
 - Inline comments explaining *why* each design choice was made
-- API calls using `fetch` with auth from `process.env`
+- API calls using `fetch` with auth from a brokered credential or `process.env`
 
 **Code generation checklist:**
 - [ ] Database declared with `worker.database()` and referenced by handle
@@ -251,6 +257,9 @@ Include in the generated code:
 Test the sync before deploying. This catches bugs early without a deploy cycle.
 
 **For syncs using static API tokens (Pattern A):**
+
+Brokered credentials must be tested after deploy in Step 8. For tokens read
+from `process.env`, test locally:
 
 1. Run `npm run check` to verify TypeScript types compile. Fix any errors.
 
