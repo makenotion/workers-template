@@ -1,6 +1,6 @@
 ---
 name: auth-guide
-description: Guide to setting up third-party authentication for a Notion Worker. Covers external-service API keys / personal access tokens and OAuth. Use when the worker needs credentials for a non-Notion API, not for Notion API tokens or `ntn login`.
+description: Guide to setting up third-party authentication for a Notion Worker. Covers brokered credentials for external-service API keys / personal access tokens, OAuth, and plaintext environment secrets only when worker code needs the value. Use when the worker needs credentials for a non-Notion API, not for Notion API tokens or `ntn login`.
 user-invocable: false
 ---
 
@@ -10,10 +10,14 @@ This guide is for authentication against the **third-party service** your worker
 
 Use it when the worker needs credentials for a non-Notion API. Do not use it for Notion API tokens, `ntn login`, or general Notion workspace setup.
 
+Never ask the user to send secret or environment-variable values in chat. For environment secrets, tell the user which variables are needed and have them enter the values directly in `.env` themselves. Do not open or print `.env` after they add them.
+
 Most workers will use one of two auth patterns from the upstream service:
 
 - personal API key / personal access token
 - OAuth
+
+For a personal API key / PAT, use a brokered credential unless worker code must read the plaintext value.
 
 ## Decision framework
 
@@ -27,14 +31,33 @@ Always research the provider's current auth docs on the web before advising the 
 
 Then choose mechanically:
 
-1. **Service offers personal API keys / PATs?** Recommend API key / PAT first. It is usually the simplest fit for an individual-scoped worker.
+1. **Service offers personal API keys / PATs?** Recommend a brokered credential first when the credential is only used in outbound request headers to known domains. Otherwise, use the API key / PAT as an environment secret because worker code needs the plaintext value. It is usually the simplest fit for an individual-scoped worker.
 2. **Service is OAuth-only?** Use OAuth.
 3. **Both exist, but the worker should not depend on one person's credential or should be easy to re-auth if that person leaves?** Recommend OAuth.
 4. **Service has neither?** See "When neither option is available" at the end of this guide.
 
-State the recommendation in one sentence with the reason. Example: "Linear offers personal API keys, so use an API key; it's the simplest fit here."
+State the recommendation in one sentence with the reason. Example: "Linear offers personal API keys, so use a brokered credential; it's the simplest fit and keeps the token out of the worker runtime."
 
-## Setup: API key
+## Setup: brokered credential
+
+Pattern: declare where the credential may be injected with `worker.credential()`. The Workers service injects it into outbound request headers outside the worker runtime.
+
+```ts
+import { CREDENTIAL_VALUE } from "@notionhq/workers";
+
+worker.credential("LINEAR_API_TOKEN", {
+  network: [{
+    domain: "api.linear.app",
+    transform: [{ headers: { Authorization: CREDENTIAL_VALUE } }],
+  }],
+});
+```
+
+Do not read a brokered credential from `process.env` or add its header in `fetch`. Deploy the declaration, then have the user set its value themselves with `ntn workers env set LINEAR_API_TOKEN=<paste token>`. Use the narrowest exact domains that work.
+
+## Setup: API key as an environment secret
+
+Use this fallback only when worker code must read the plaintext value, such as for webhook verification, signing or encryption, a request body or query parameter, or a non-HTTP client.
 
 Pattern: store the credential in `.env` (or directly in the deployed worker's secrets), read it from `process.env` inside the capability's `execute`, push `.env` to the deployed worker before going live.
 
@@ -173,7 +196,7 @@ Caveats:
 
 ## Common pitfalls
 
-1. **Hardcoded credentials in source.** Tokens and secrets must come from `process.env` — never inline them in `src/index.ts`. Even in personal repos, committed secrets get scraped.
+1. **Hardcoded credentials in source.** Use a brokered credential, or `process.env` when worker code needs the plaintext value — never inline secrets in `src/index.ts`. Even in personal repos, committed secrets get scraped.
 
 2. **Forgetting `ntn workers env push`.** Local works, deploy fails with auth errors. Always push secrets after changing `.env`. The deployed worker doesn't see local `.env`.
 

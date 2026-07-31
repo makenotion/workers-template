@@ -46,7 +46,7 @@ Before starting, read `.agents/skills/sync-guide/SKILL.md` for the full sync con
     - If the delete signal is on a separate endpoint, is the flip-flop pattern used (alternate streams at cycle boundaries)?
     - If no delete signal exists, should this be a replace-mode sync instead?
 
-13. **Hardcoded secrets**: Are API keys, tokens, or credentials in the code instead of `process.env`? Flag any string that looks like a secret.
+13. **Hardcoded secrets**: Are API keys, tokens, or credentials in the code instead of a brokered credential or `process.env`? Flag any string that looks like a secret.
 
 14. **Missing error handling on fetch**: Network calls without error handling will crash the sync on any transient failure. Consider whether the sync should catch and handle API errors or let them propagate (the runtime will retry the cycle).
 
