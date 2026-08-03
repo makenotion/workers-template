@@ -146,5 +146,3 @@ Use the run history and logs to find the first error and the last completed step
 ntn workers runs list
 ntn workers runs logs <run-id>
 ```
-
-Before you repeat a failed write by hand, check whether the outside service already accepted it.
