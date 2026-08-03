@@ -18,15 +18,15 @@ import { triggers } from "@notionhq/workers/alpha/triggers";
 import { createWorkflow } from "@notionhq/workers/alpha/workflow";
 
 export default createWorkflow({
-	title: "Process new pages",
-	description: "Processes a page after it is added to a database.",
-	triggers: [triggers.notionPageCreated()],
-	handler: async (event, context) => {
-		await context.step("Process page", async ({ id }) => {
-			console.log(`Processing ${event.url} with idempotency key ${id}`);
-			return { pageUrl: event.url };
-		});
-	},
+  title: "Process new pages",
+  description: "Processes a page after it is added to a database.",
+  triggers: [triggers.notionPageCreated()],
+  handler: async (event, context) => {
+    await context.step("Process page", async ({ id }) => {
+      console.log(`Processing ${event.url} with idempotency key ${id}`);
+      return { pageUrl: event.url };
+    });
+  },
 });
 ```
 
@@ -59,24 +59,24 @@ Prefer small steps around each non-deterministic result or side-effect boundary:
 
 ```ts
 const page = await context.step("Fetch page", () =>
-	context.notion.pages.retrieve({ page_id: pageId }),
+  context.notion.pages.retrieve({ page_id: pageId }),
 );
 
 const runMetadata = await context.step("Generate run metadata", () => ({
-	startedAt: new Date().toISOString(),
-	nonce: crypto.randomUUID(),
+  startedAt: new Date().toISOString(),
+  nonce: crypto.randomUUID(),
 }));
 
 await context.step("Notify downstream service", async ({ id }) => {
-	const response = await fetch(process.env.SERVICE_URL ?? "", {
-		method: "POST",
-		headers: { "Idempotency-Key": id, "Content-Type": "application/json" },
-		body: JSON.stringify({ page, runMetadata }),
-	});
+  const response = await fetch(process.env.SERVICE_URL ?? "", {
+    method: "POST",
+    headers: { "Idempotency-Key": id, "Content-Type": "application/json" },
+    body: JSON.stringify({ page, runMetadata }),
+  });
 
-	if (!response.ok) {
-		throw new Error(`Downstream request failed: ${response.status}`);
-	}
+  if (!response.ok) {
+    throw new Error(`Downstream request failed: ${response.status}`);
+  }
 });
 ```
 
@@ -86,7 +86,7 @@ For repeated work, make each name distinct while preserving deterministic call o
 const pages = await context.step("Fetch pages", () => fetchPages());
 
 for (const [index, page] of pages.entries()) {
-	await context.step(`Update page ${index + 1} (${page.id})`, () => updatePage(page));
+  await context.step(`Update page ${index + 1} (${page.id})`, () => updatePage(page));
 }
 ```
 

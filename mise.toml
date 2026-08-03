@@ -10,11 +10,20 @@ run = "npx oxfmt --check"
 [tasks.check]
 depends = ["check:*"]
 
+[tasks."check:agents"]
+run = "./scripts/sync-agent-files.sh --check"
+
 [tasks."fix:lint"]
 run = "npx oxlint --fix"
 
 [tasks."fix:format"]
 run = "npx oxfmt --write"
 
+[tasks."fix:agents"]
+run = "./scripts/sync-agent-files.sh"
+
 [tasks.fix]
 depends = ["fix:*"]
+
+[tasks.pre-commit]
+depends = ["check"]
