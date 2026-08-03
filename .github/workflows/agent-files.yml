@@ -22,5 +22,5 @@ jobs:
           cache: false
           install: false
 
-      - name: Compare agent file hashes
-        run: mise run check:agents
+      - name: Run checks
+        run: mise run check
