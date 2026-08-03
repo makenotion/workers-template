@@ -1,9 +1,9 @@
-# Notion Workflows
+# Workflows in Notion Workers
 
 > [!WARNING]
-> Notion Workflows are in a very early alpha. The SDK is under heavy development. Expect breaking changes. A deployed Worker that uses Workflows may stop working without warning.
+> Workflows are a very early alpha feature of Notion Workers. The SDK is under heavy development. Expect breaking changes. A deployed Worker that uses Workflows may stop working without warning.
 
-Notion Workflows let you run an automation when an event happens. The event that starts a Workflow is called a **trigger**.
+Workflows are part of Notion Workers. They let your Worker run an automation when an event happens. The event that starts a Workflow is called a **trigger**.
 
 A Workflow can use the same range of triggers as a Notion Custom Agent. For example, a Workflow can start when:
 
