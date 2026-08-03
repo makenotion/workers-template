@@ -148,34 +148,3 @@ ntn workers runs logs <run-id>
 ```
 
 Before you repeat a failed write by hand, check whether the outside service already accepted it.
-
-## Alpha checklist
-
-Before you share a Workflow with other alpha users, write down:
-
-- the trigger and the connected account it uses;
-- the Notion pages or databases it can access;
-- every outside system it can read or change;
-- the environment variables it needs;
-- how each write avoids duplicates;
-- what a user should do after the final retry fails;
-- what private data may appear in logs; and
-- an owner who can fix or turn off the Workflow.
-
-Do not use this alpha for work where a missed, delayed, or repeated action could cause serious harm.
-
-## Details still needed for the alpha
-
-The alpha group will also need clear answers to these questions. Add them here as the product rules become firm:
-
-- Which triggers are available, and what data does each event contain?
-- What are the run time, payload size, step count, and data storage limits?
-- How long are saved step results, run history, and logs kept?
-- How are timeouts, rate limits, and two runs changing the same data handled?
-- Can a user pause, cancel, replay, or manually start a run?
-- What happens to active runs after a Workflow is changed or redeployed?
-- Which regions store Workflow inputs, outputs, and logs?
-- How should alpha users report bugs, request access, and get help?
-- How will breaking SDK changes and required migrations be announced?
-
-Until these rules are documented, test with low-risk data and keep a manual way to check and repair results.
