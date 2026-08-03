@@ -111,7 +111,7 @@ Do not build a Workflow that depends on exactly-once delivery. Make important wr
 
 ## Notion and Custom Agent APIs
 
-A Workflow can call the Notion API. It can also call Custom Agents when the user has access to the Custom Agents API.
+A Workflow can call the Notion API. It can also call Custom Agents if you have access to the Custom Agents API.
 
 Both the Workflows API and the Custom Agents API are in alpha and under heavy development. Their names, types, behavior, and access rules may change. Code that uses either API may need updates at any time.
 
