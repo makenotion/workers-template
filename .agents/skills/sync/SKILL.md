@@ -92,6 +92,13 @@ Guidelines:
 - Declare the database with `worker.database()` and reference the handle in `worker.sync()`
 - Every schema needs exactly one `Schema.title()` — pick the most descriptive field
 - Use `Schema.richText()` for the primary key property (the unique ID)
+- Treat property order as product design, not API order. Put the title first,
+  followed by the five properties that best help an end user recognize,
+  evaluate, or act on the record.
+- Keep opaque IDs, sync keys, timestamps used only for cursors, and other
+  implementation metadata out of the first six properties. Include a user-facing
+  identifier such as an order number or issue key early only when users genuinely
+  rely on it.
 - Use `Schema.url()`, `Schema.email()`, `Schema.date()`, `Schema.number()`,
   `Schema.checkbox()`, `Schema.select()` where the data type fits
 - Use `Schema.relation("otherDatabaseKey")` for relations to another managed database
