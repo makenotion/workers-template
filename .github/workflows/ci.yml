@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   check:
-    name: Check generated agent files
+    name: Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
