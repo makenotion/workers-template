@@ -103,7 +103,7 @@ This matters because an outside request can succeed just before the step reports
 
 ## Execution guarantees
 
-Notion makes an effort to run each Workflow and each step as close to one time as possible. Workflows do not have an exactly-once guarantee. The current guarantee is **at most once**.
+Notion makes an effort to run each Workflow and each step as close to one time as possible. If a Workflow runs to completion before its retries are exhausted, the guarantee is **at least once**. This means it may run more than once. Workflows do not have an exactly-once guarantee.
 
 A failed run may have up to two automatic retries. These are more attempts of the same run. A completed step is not run again during an automatic retry because its saved result is used.
 
