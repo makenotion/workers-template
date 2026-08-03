@@ -18,12 +18,11 @@ Workflows are **durable**. If a run fails, Notion automatically retries it up to
 
 ## Create a Workflow
 
-Put each Workflow in a TypeScript file directly inside `src/workflows/`. The file name becomes the Workflow key. Use a short, kebab-case name, such as `send-new-page.ts`.
+Put each Workflow in a TypeScript file directly inside `src/workflows/`. The file name becomes the Workflow key.
 
 This Workflow starts when a page is added to a Notion database. It sends the page to another service:
 
 ```ts
-// src/workflows/send-new-page.ts
 import { triggers } from "@notionhq/workers/alpha/triggers";
 import { createWorkflow } from "@notionhq/workers/alpha/workflow";
 
