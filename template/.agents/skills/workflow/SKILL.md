@@ -26,7 +26,7 @@ Then determine:
 
 Recommend a trigger and a short ordered list of step boundaries. Ask a question only when a missing choice would materially change the behavior or safety of the workflow.
 
-Create a kebab-case file directly under `src/workflows/`. Default-export `createWorkflow(...)`, use trigger creators instead of hand-written trigger objects, and let the trigger array infer the handler event type.
+Create a camelCase file directly under `src/workflows/`. Default-export `createWorkflow(...)`, use trigger creators instead of hand-written trigger objects, and let the trigger array infer the handler event type.
 
 Anything non-deterministic must happen inside an awaited `context.step(...)` call. This applies when either the result can vary or the external effect depends on whether the operation runs. It includes any I/O whose result matters, mutable external state, current time, randomness, generated identifiers, messages, notifications, creates, updates, and action-style calls. Only deterministic transformations of recorded values belong outside steps. Give every step a unique, deterministic name; for repeated work, append a stable entity ID or an index from a collection returned by an earlier step. Use that collection's recorded order directly. Keep step order deterministic, return JSON-serializable data needed by later code, pass the step `id` to retry-sensitive downstream operations when supported, validate response status, and let unrecoverable failures propagate.
 

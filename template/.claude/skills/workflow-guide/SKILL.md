@@ -10,7 +10,7 @@ Use this reference whenever creating, changing, reviewing, or debugging a workfl
 
 ## Definition Shape
 
-A workflow is a default export from a kebab-case file directly under `src/workflows/`. The filename becomes the workflow key.
+A workflow is a default export from a camelCase file directly under `src/workflows/`. The filename becomes the workflow key.
 
 ```ts
 import { triggers } from "@notionhq/workers/alpha/triggers";

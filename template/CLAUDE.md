@@ -5,7 +5,7 @@ Overall Workers documentation lives at https://developers.notion.com/workers/get
 ## Project Structure
 
 - `src/workflows/` contains workflow definitions. Each file directly inside this directory defines one workflow.
-- The basename of a workflow file becomes its key. Use kebab-case, such as `on-page-created.ts`.
+- The basename of a workflow file becomes its key. Use camelCase, such as `onPageCreated.ts`.
 - Generated files live in `dist/` and `.notion/`; do not edit them by hand.
 
 ## Workflow API
@@ -13,7 +13,7 @@ Overall Workers documentation lives at https://developers.notion.com/workers/get
 Create workflows with `createWorkflow` and declare their triggers with `triggers`:
 
 ```ts
-// src/workflows/on-page-created.ts
+// src/workflows/onPageCreated.ts
 import { triggers } from "@notionhq/workers/alpha/triggers";
 import { createWorkflow } from "@notionhq/workers/alpha/workflow";
 
@@ -133,7 +133,7 @@ Start with the first error and the last completed step. Check whether a failed s
 ## Coding Style
 
 - TypeScript runs with `strict` enabled. Keep event narrowing and external response types explicit.
-- Use tabs for indentation and kebab-case for workflow filenames and keys.
+- Use tabs for indentation and camelCase for workflow filenames and keys.
 - Validate HTTP responses before consuming or returning them.
 - Read secrets through `process.env` and fail with a clear message when required configuration is absent.
 - Keep workflow handlers orchestration-focused; extract substantial parsing and transformation logic into nearby modules.
