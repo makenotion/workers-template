@@ -2,7 +2,7 @@ import { triggers } from "@notionhq/workers/alpha/triggers";
 import { createWorkflow } from "@notionhq/workers/alpha/workflow";
 
 export default createWorkflow({
-  title: "Say Hello",
+  name: "Say Hello",
   description: "Says hello on a recurring schedule.",
   triggers: [triggers.recurrence()],
   handler: async (_event, context) => {
