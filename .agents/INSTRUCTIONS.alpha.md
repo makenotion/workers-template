@@ -34,15 +34,62 @@ See docs in `node_modules/@notionhq/custom-blocks-dev-shell/docs` for informatio
 
 #### Custom block sources
 
-A project source is the default. `path` points to a buildable project directory relative to the worker root. The deploy pipeline runs `npm run build` in that directory and serves its `dist` output by default:
+A project source is the default. `path` points to a buildable project directory relative to the worker root. Put each frontend in `blocks/<name>/`, with its own browser-oriented `tsconfig.json` and Vite config, while continuing to share the worker's root `package.json` and `node_modules`:
+
+```text
+blocks/issue-board/
+├── src/
+│   └── index.tsx
+├── index.html
+├── tsconfig.json
+└── vite.config.ts
+```
+
+Do not add block sources to the worker's root `tsconfig.json`: it intentionally compiles only `src/**/*` with Node settings. Create `blocks/<name>/tsconfig.json` for the browser frontend instead:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "types": ["vite/client"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "vite.config.ts"]
+}
+```
+
+Also extend the root `check` script so it type-checks every block frontend. For example:
+
+```json
+{
+  "scripts": {
+    "check": "tsc --noEmit && tsc -p blocks/issue-board/tsconfig.json --noEmit"
+  }
+}
+```
+
+For multiple blocks, append one `tsc -p blocks/<name>/tsconfig.json --noEmit` command per block.
+
+Because the block does not have a nested `package.json`, explicitly set its build command to Vite. Otherwise the default `npm run build` resolves the worker root's Node build and does not produce the frontend bundle:
 
 ```ts
 worker.customBlock("issueBoard", {
   path: "./blocks/issue-board",
+  command: "npx vite build",
+  output: "dist",
 });
 ```
 
-Use `command` and `output` to override those build defaults:
+Use a different `command` or `output` only when the frontend's build tool requires it:
 
 ```ts
 worker.customBlock("issueBoard", {
