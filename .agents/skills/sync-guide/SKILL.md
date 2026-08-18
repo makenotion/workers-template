@@ -57,6 +57,10 @@ The deciding factor is **API capability and dataset size**. Two tiers:
 
 **Backfill + delta pair**: Two syncs share a single database. The **backfill sync** (`mode: "replace"`, `schedule: "manual"`) re-fetches everything when triggered. The **delta sync** (`mode: "incremental"`, frequent schedule) fetches only changes since the last run. This separates concerns cleanly — no bi-modal state machine, no backfill-to-delta transition bugs.
 
+Initialize the delta cursor before starting the backfill. When both syncs can
+write the same record, include `upstreamUpdatedAt` on each upsert so a stale
+backfill response cannot overwrite a newer delta response.
+
 ### Step 2: Understand Your API's Pagination
 
 Most APIs require paginating through results. Return batches of ~100 changes. Returning too many changes in one `execute` call will fail.
@@ -79,8 +83,12 @@ APIs tend to be eventually consistent. A record that was just written or updated
 ```ts
 const bufferMs = 15_000;
 const maxCursor = new Date(Date.now() - bufferMs).toISOString();
+function minTimestamp(a: string, b: string): string {
+	return Date.parse(a) <= Date.parse(b) ? a : b;
+}
+
 const nextCursor = records.length > 0
-  ? min(lastRecord.updatedAt, maxCursor)
+  ? minTimestamp(lastRecord.updatedAt, maxCursor)
   : maxCursor;
 ```
 
@@ -149,14 +157,17 @@ worker.sync("recordsDelta", {
     const bufferTs = new Date(Date.now() - 15_000).toISOString();
 
     await apiPacer.wait();
-    const { items, nextCursor } = await fetchChanges(cursor);
+    // fetchChanges must apply bufferTs as an upstream upper bound.
+    const { items, nextCursor } = await fetchChanges(cursor, bufferTs);
     const done = !nextCursor;
 
     return {
       changes: items.map(toUpsert),
       hasMore: !done,
       nextState: {
-        cursor: done ? min(nextCursor ?? cursor, bufferTs) : nextCursor,
+        // This example assumes nextCursor is an ISO timestamp. Opaque cursors
+        // must not be compared with the timestamp buffer.
+        cursor: done ? minTimestamp(nextCursor ?? cursor, bufferTs) : nextCursor,
       },
     };
   },
@@ -190,7 +201,7 @@ Define the Notion database shape with `Schema` types and build values with `Buil
 | `Schema.multiSelect([...])` | `Builder.multiSelect("A", "B")` | Multi select |
 | `Schema.status(...)` | `Builder.status("Done")` | Status with groups |
 | `Schema.people()` | `Builder.people("email@co.com")` | People by email |
-| `Schema.place()` | `Builder.place({ latitude, longitude })` | Geographic location |
+| `Schema.place()` | `Builder.place({ lat: 40.7, lon: -74.0 })` | Geographic location |
 | `Schema.relation("databaseKey")` | `[Builder.relation("pk")]` | Relation to another managed database. Value is an **array**. |
 
 Relations use the related database key. Two-way relations are configured the same way:
@@ -202,7 +213,10 @@ Row-level icons and page content:
 ```ts
 changes: [{
   type: "upsert", key: "1",
-  properties: { ... },
+  properties: {
+    Name: Builder.title("Example"),
+    // ... other properties ...
+  },
   icon: Builder.emojiIcon("🎯"),               // or Builder.notionIcon("rocket", "blue")
   pageContentMarkdown: "## Details\nSome text", // Markdown body for the page
 }]
