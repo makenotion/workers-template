@@ -15,6 +15,7 @@ execute(state) → { changes, hasMore, nextState }
 The cursor lives in `nextState`. The runtime calls `execute` again with that state until `hasMore` is `false`, completing a **cycle**. The next cycle starts with the state from the end of the previous cycle.
 
 **Critical:** In incremental mode, state is never reset. The cursor persists across cycles indefinitely. When a cycle ends (`hasMore: false`), the next cycle begins with the same `nextState`. This means:
+
 - Records behind the cursor are never re-fetched (unless you explicitly move the cursor backwards)
 - A consistency buffer isn't about "catching up next time" — it's about ensuring the cursor never advances past records that haven't been indexed by the source API yet
 - If a record is missed because the cursor passed it, it's missed permanently
@@ -26,7 +27,7 @@ representation:
 
 ```ts
 function minTimestamp(a: string, b: string): string {
-	return Date.parse(a) <= Date.parse(b) ? a : b;
+  return Date.parse(a) <= Date.parse(b) ? a : b;
 }
 ```
 
@@ -72,11 +73,7 @@ Since the backfill is a replace-mode sync, its state is only used for within-cyc
 
 ### Gotcha: Unreliable `done` Flag
 
-Salesforce returns a `done` boolean in query results. A response can contain
-fewer than `limit` records while `done` is still `false`, so the production
-code requires *both* `done == true` AND `records.length < limit` before treating
-a page as the last one. A non-terminal empty page must use the API's query
-locator or be retried; never derive a cursor from an absent record.
+Salesforce returns a `done` boolean in query results. A response can contain fewer than `limit` records while `done` is still `false`, so the production code requires _both_ `done == true` AND `records.length < limit` before treating a page as the last one. A non-terminal empty page must use the API's query locator or be retried. Never derive a cursor from an absent record.
 
 ### Workers Mapping
 
@@ -84,19 +81,19 @@ With the v2 SDK, this is modeled as two syncs: a manual backfill (replace) and a
 
 ```ts
 const db = worker.database("salesforce_accounts", {
-	type: "managed",
-	initialTitle: "Salesforce Accounts",
-	primaryKeyProperty: "Account ID",
-	schema: {
-		properties: {
-			Name: Schema.title(),
-			"Account ID": Schema.richText(),
-		},
-	},
+  type: "managed",
+  initialTitle: "Salesforce Accounts",
+  primaryKeyProperty: "Account ID",
+  schema: {
+    properties: {
+      Name: Schema.title(),
+      "Account ID": Schema.richText(),
+    },
+  },
 });
 const salesforceApi = worker.pacer("salesforce", {
-	allowedRequests: 10,
-	intervalMs: 1000,
+  allowedRequests: 10,
+  intervalMs: 1000,
 });
 const BATCH_SIZE = 100;
 
@@ -105,7 +102,9 @@ worker.sync("salesforceBackfill", {
   database: db,
   mode: "replace",
   schedule: "manual",
-  execute: async (state: { cursorTimestamp: string; cursorId: string } | undefined) => {
+  execute: async (
+    state: { cursorTimestamp: string; cursorId: string } | undefined,
+  ) => {
     // Keyset query: WHERE CreatedDate > X OR (CreatedDate = X AND Id > Y)
     // ORDER BY CreatedDate, Id LIMIT 100
     await salesforceApi.wait();
@@ -122,7 +121,9 @@ worker.sync("salesforceBackfill", {
     return {
       changes: records.map(toUpsert),
       hasMore: !done,
-      nextState: done ? undefined : { cursorTimestamp: last.CreatedDate, cursorId: last.Id },
+      nextState: done
+        ? undefined
+        : { cursorTimestamp: last.CreatedDate, cursorId: last.Id },
     };
   },
 });
@@ -132,7 +133,9 @@ worker.sync("salesforceDelta", {
   database: db,
   mode: "incremental",
   schedule: "5m",
-  execute: async (state: { cursorTimestamp: string; cursorId: string } | undefined) => {
+  execute: async (
+    state: { cursorTimestamp: string; cursorId: string } | undefined,
+  ) => {
     const bufferTs = new Date(Date.now() - 15_000).toISOString();
     const previousTimestamp = state?.cursorTimestamp ?? bufferTs;
     const previousId = state?.cursorId ?? "";
@@ -157,7 +160,7 @@ worker.sync("salesforceDelta", {
       nextState: {
         cursorTimestamp: done
           ? minTimestamp(last?.SystemModstamp ?? previousTimestamp, bufferTs)
-          : last?.SystemModstamp ?? previousTimestamp,
+          : (last?.SystemModstamp ?? previousTimestamp),
         cursorId: last?.Id ?? previousId,
       },
     };
@@ -211,19 +214,19 @@ share execution state automatically.
 
 ```ts
 const db = worker.database("stripe_customers", {
-	type: "managed",
-	initialTitle: "Stripe Customers",
-	primaryKeyProperty: "Customer ID",
-	schema: {
-		properties: {
-			Name: Schema.title(),
-			"Customer ID": Schema.richText(),
-		},
-	},
+  type: "managed",
+  initialTitle: "Stripe Customers",
+  primaryKeyProperty: "Customer ID",
+  schema: {
+    properties: {
+      Name: Schema.title(),
+      "Customer ID": Schema.richText(),
+    },
+  },
 });
 const stripeApi = worker.pacer("stripe", {
-	allowedRequests: 10,
-	intervalMs: 1000,
+  allowedRequests: 10,
+  intervalMs: 1000,
 });
 
 // Backfill: paginate all customers. Initialize stripeDelta before this sync
@@ -275,7 +278,7 @@ worker.sync("stripeDelta", {
       ending_before: cursor,
       limit: 100,
     });
-    const safeEvents = events.filter(e => e.created < Date.now() / 1000 - 10);
+    const safeEvents = events.filter((e) => e.created < Date.now() / 1000 - 10);
     // Stripe returns reverse-chronological pages. Apply changes oldest first
     // so multiple events for one object cannot regress its final state.
     const changes = [...safeEvents].reverse().map(eventToChange);
@@ -325,7 +328,12 @@ type HubSpotBackfillState = { afterToken: string | null };
 // Delta cursor (deadlock handling requires multi-phase state)
 type HubSpotDeltaState =
   | { phase: "delta"; cursorMs: number }
-  | { phase: "deadlock"; deadlockMs: number; lastId: string; resumeCursorMs: number };
+  | {
+      phase: "deadlock";
+      deadlockMs: number;
+      lastId: string;
+      resumeCursorMs: number;
+    };
 ```
 
 ### Workers Mapping
@@ -334,19 +342,19 @@ Two syncs: a manual backfill using the List endpoint, and a delta sync using the
 
 ```ts
 const db = worker.database("hubspot_contacts", {
-	type: "managed",
-	initialTitle: "HubSpot Contacts",
-	primaryKeyProperty: "Contact ID",
-	schema: {
-		properties: {
-			Name: Schema.title(),
-			"Contact ID": Schema.richText(),
-		},
-	},
+  type: "managed",
+  initialTitle: "HubSpot Contacts",
+  primaryKeyProperty: "Contact ID",
+  schema: {
+    properties: {
+      Name: Schema.title(),
+      "Contact ID": Schema.richText(),
+    },
+  },
 });
 const hubspotApi = worker.pacer("hubspot", {
-	allowedRequests: 5,
-	intervalMs: 1000,
+  allowedRequests: 5,
+  intervalMs: 1000,
 });
 
 // Backfill: paginate using opaque after token
@@ -370,7 +378,12 @@ worker.sync("hubspotBackfill", {
 // Delta: search by lastmodifieddate with deadlock handling
 type HubSpotDeltaState =
   | { phase: "delta"; cursorMs: number }
-  | { phase: "deadlock"; deadlockMs: number; lastId: string; resumeCursorMs: number };
+  | {
+      phase: "deadlock";
+      deadlockMs: number;
+      lastId: string;
+      resumeCursorMs: number;
+    };
 
 worker.sync("hubspotDelta", {
   database: db,
@@ -402,7 +415,12 @@ worker.sync("hubspotDelta", {
       return {
         changes: results.map(toUpsert),
         hasMore: true,
-        nextState: { phase: "deadlock", deadlockMs: state.deadlockMs, lastId, resumeCursorMs: state.resumeCursorMs },
+        nextState: {
+          phase: "deadlock",
+          deadlockMs: state.deadlockMs,
+          lastId,
+          resumeCursorMs: state.resumeCursorMs,
+        },
       };
     }
 
@@ -419,8 +437,9 @@ worker.sync("hubspotDelta", {
     });
 
     // Deadlock detection
-    const allSameTimestamp = results.length === 100 &&
-      results.every(r => r.lastmodifieddate === results[0].lastmodifieddate);
+    const allSameTimestamp =
+      results.length === 100 &&
+      results.every((r) => r.lastmodifieddate === results[0].lastmodifieddate);
 
     if (allSameTimestamp) {
       return {
@@ -443,7 +462,7 @@ worker.sync("hubspotDelta", {
       };
     }
 
-    const maxTs = Math.max(...results.map(r => r.lastmodifieddate));
+    const maxTs = Math.max(...results.map((r) => r.lastmodifieddate));
     const nextCursor = Math.min(maxTs, bufferMs);
     const done = results.length < 100;
 
@@ -495,19 +514,19 @@ type GitHubState = {
 
 ```ts
 const db = worker.database("github_repos", {
-	type: "managed",
-	initialTitle: "GitHub Repositories",
-	primaryKeyProperty: "Repository ID",
-	schema: {
-		properties: {
-			Name: Schema.title(),
-			"Repository ID": Schema.richText(),
-		},
-	},
+  type: "managed",
+  initialTitle: "GitHub Repositories",
+  primaryKeyProperty: "Repository ID",
+  schema: {
+    properties: {
+      Name: Schema.title(),
+      "Repository ID": Schema.richText(),
+    },
+  },
 });
 const githubApi = worker.pacer("github", {
-	allowedRequests: 5,
-	intervalMs: 1000,
+  allowedRequests: 5,
+  intervalMs: 1000,
 });
 
 worker.sync("githubSync", {
@@ -571,14 +590,25 @@ With separate syncs, the backfill cursor is simple. The delta sync uses a flip-f
 
 ```ts
 // Backfill cursor (within-cycle pagination for replace mode)
-type ServiceNowBackfillState = { afterTimestamp: string | null; afterId: string | null };
+type ServiceNowBackfillState = {
+  afterTimestamp: string | null;
+  afterId: string | null;
+};
 
 // Delta cursor (flip-flop between changes and deletes)
 type ServiceNowDeltaState =
-  | { phase: "delta"; afterTimestamp: string; afterId: string;
-      deletesCursor?: { afterCreatedOn: string; afterId: string } }
-  | { phase: "deletes"; afterCreatedOn: string; afterId: string;
-      deltaCursor: { afterTimestamp: string; afterId: string } };
+  | {
+      phase: "delta";
+      afterTimestamp: string;
+      afterId: string;
+      deletesCursor?: { afterCreatedOn: string; afterId: string };
+    }
+  | {
+      phase: "deletes";
+      afterCreatedOn: string;
+      afterId: string;
+      deltaCursor: { afterTimestamp: string; afterId: string };
+    };
 ```
 
 ---
@@ -588,6 +618,7 @@ type ServiceNowDeltaState =
 Some APIs (Linear, Airtable) have no `updated_at`, no change feed, and no deletion webhook. For these, **use `mode: "replace"`**. The runtime handles the full sweep automatically: each cycle returns the complete dataset, and anything not returned gets deleted.
 
 Replace mode is the right choice when:
+
 - The API provides only opaque cursor pagination with no timestamp filtering
 - Total records are manageable (< ~50k, depending on schedule interval)
 - You need deletion detection but the API provides no delete signal
@@ -638,9 +669,10 @@ The buffer ensures the cursor stays behind the API's consistency frontier.
 ```ts
 const bufferMs = 15_000; // 15 seconds
 const maxCursor = new Date(Date.now() - bufferMs).toISOString();
-const nextCursor = records.length > 0
-  ? minTimestamp(lastRecord.updatedAt, maxCursor)
-  : maxCursor;
+const nextCursor =
+  records.length > 0
+    ? minTimestamp(lastRecord.updatedAt, maxCursor)
+    : maxCursor;
 ```
 
 ### Pattern 3: Event Anchor (Backfill-to-Delta Transition)
@@ -675,7 +707,12 @@ Model the state as a discriminated union when a single sync needs multiple phase
 ```ts
 type State =
   | { phase: "delta"; cursor: string }
-  | { phase: "deadlock"; stuckAt: number; lastId: string; resumeCursor: string };
+  | {
+      phase: "deadlock";
+      stuckAt: number;
+      lastId: string;
+      resumeCursor: string;
+    };
 ```
 
 Each `execute` call checks `state.phase` and runs the appropriate logic. In the v2 SDK, backfill and delta are typically **separate syncs** (backfill as `replace` + `manual`, delta as `incremental`), so the state machine within a single sync is simpler. Multi-phase state machines are still useful for edge cases within a delta sync (deadlock handling, flip-flop deletes).
@@ -719,20 +756,30 @@ if (state.phase === "delta") {
     return {
       changes: records.map(toUpsert),
       hasMore: false,
-      nextState: { phase: "deletes", deltaCursor: nextCursor, deletesCursor: state.deletesCursor ?? "" },
+      nextState: {
+        phase: "deletes",
+        deltaCursor: nextCursor,
+        deletesCursor: state.deletesCursor ?? "",
+      },
     };
   }
   // ... continue delta
 }
 
 if (state.phase === "deletes") {
-  const { deletedIds, hasMore } = await fetchDeletedRecords(state.deletesCursor);
+  const { deletedIds, hasMore } = await fetchDeletedRecords(
+    state.deletesCursor,
+  );
   if (!hasMore) {
     // Deletes caught up — flip back to delta
     return {
-      changes: deletedIds.map(id => ({ type: "delete", key: id })),
+      changes: deletedIds.map((id) => ({ type: "delete", key: id })),
       hasMore: false,
-      nextState: { phase: "delta", deltaCursor: state.deltaCursor, deletesCursor: nextCursor },
+      nextState: {
+        phase: "delta",
+        deltaCursor: state.deltaCursor,
+        deletesCursor: nextCursor,
+      },
     };
   }
   // ... continue deletes
@@ -810,10 +857,10 @@ Does the API support change tracking (updated_at / modified_since / change feed)
 
 ## Summary Table
 
-| Source | API Type | Backfill Pagination | Delta Strategy | Key Pattern |
-|---|---|---|---|---|
-| Salesforce | REST/SOQL | Keyset (timestamp, id) | Keyset on SystemModstamp | Consistency buffer (15s), overlap transition |
-| Stripe | REST | `starting_after` cursor | Event feed (10s buffer) | Event anchor before backfill |
-| HubSpot | REST | Opaque `after` token | Search API + timestamp | Deadlock detection & resolution |
-| GitHub | GraphQL | Relay `endCursor` | N/A (use replace mode) | Two-level nested pagination |
-| ServiceNow | REST | Keyset (timestamp, id) | Same keyset | Flip-flop delete stream via audit log |
+| Source     | API Type  | Backfill Pagination     | Delta Strategy           | Key Pattern                                  |
+| ---------- | --------- | ----------------------- | ------------------------ | -------------------------------------------- |
+| Salesforce | REST/SOQL | Keyset (timestamp, id)  | Keyset on SystemModstamp | Consistency buffer (15s), overlap transition |
+| Stripe     | REST      | `starting_after` cursor | Event feed (10s buffer)  | Event anchor before backfill                 |
+| HubSpot    | REST      | Opaque `after` token    | Search API + timestamp   | Deadlock detection & resolution              |
+| GitHub     | GraphQL   | Relay `endCursor`       | N/A (use replace mode)   | Two-level nested pagination                  |
+| ServiceNow | REST      | Keyset (timestamp, id)  | Same keyset              | Flip-flop delete stream via audit log        |

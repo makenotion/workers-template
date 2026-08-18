@@ -108,7 +108,10 @@ worker.sync("customersDelta", {
 			if (event.type.endsWith(".deleted")) {
 				return { type: "delete" as const, key: event.data.object.id };
 			}
-			return toUpsert(event.data.object);
+			return toUpsert(
+				event.data.object,
+				new Date(event.created * 1000).toISOString(),
+			);
 		});
 
 		// Only advance cursor if we have safe events to process.
@@ -126,10 +129,14 @@ worker.sync("customersDelta", {
 	},
 });
 
-function toUpsert(customer: { id: string; name: string }) {
+function toUpsert(
+	customer: { id: string; name: string },
+	upstreamUpdatedAt: string,
+) {
 	return {
 		type: "upsert" as const,
 		key: customer.id,
+		upstreamUpdatedAt,
 		properties: {
 			Name: Builder.title(customer.name),
 			"Customer ID": Builder.richText(customer.id),
