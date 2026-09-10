@@ -1,3 +1,7 @@
+> [!IMPORTANT]
+> This repository is now archived.
+> The default worker template now lives in [Notion Cookbook](https://github.com/makenotion/notion-cookbook/tree/main/workers/templates/workers-default).
+
 # Notion Workers [beta]
 
 A worker is a small Node/TypeScript program hosted by Notion. Workers have three capability types:
